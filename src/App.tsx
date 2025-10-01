@@ -31,9 +31,13 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="py-6">
             <div className="flex items-center space-x-3">
-              <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-3 rounded-xl shadow-lg">
-                <Heart className="w-8 h-8 text-white" />
-              </div>
+              <div className="bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center">
+              <img 
+                src="/assets/logo.svg" 
+                alt="Health Icon" 
+                className="w-12 h-12"
+              />
+            </div>
               <div>
                 <h1 className="text-3xl font-bold text-slate-900">HealthGuard</h1>
                 <p className="text-sm text-slate-600 mt-0.5">Chronic Disease Management Platform</p>
