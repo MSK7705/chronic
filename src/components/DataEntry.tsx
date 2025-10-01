@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Heart, Droplet, Activity, Thermometer, Weight, Save, CheckCircle } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface DataEntryProps {
   onDataSubmit: () => void;
@@ -41,27 +42,58 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
     e.preventDefault();
     setIsSubmitting(true);
 
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        throw new Error('You must be logged in to submit data');
+      }
 
-    setShowSuccess(true);
-    setIsSubmitting(false);
-    onDataSubmit();
+      // Get user's full name from metadata
+      const userName = user.user_metadata?.full_name || 'Unknown User';
+      
+      // Save data to Supabase
+      const { error } = await supabase
+        .from('vital_signs')
+        .insert({
+          user_id: user.id,
+          user_name: userName,
+          blood_glucose: parseFloat(formData.bloodGlucose) || null,
+          systolic: parseInt(formData.systolic) || null,
+          diastolic: parseInt(formData.diastolic) || null,
+          heart_rate: parseInt(formData.heartRate) || null,
+          temperature: parseFloat(formData.temperature) || null,
+          weight: parseFloat(formData.weight) || null,
+          notes: formData.notes,
+          recorded_at: new Date().toISOString()
+        });
 
-    // Reset form
-    setFormData({
-      bloodGlucose: '',
-      systolic: '',
-      diastolic: '',
-      heartRate: '',
-      temperature: '',
-      weight: '',
-      notes: ''
-    });
+      if (error) throw error;
 
-    setTimeout(() => {
-      setShowSuccess(false);
-    }, 3000);
+      setShowSuccess(true);
+      onDataSubmit();
+
+      // Reset form
+      setFormData({
+        bloodGlucose: '',
+        systolic: '',
+        diastolic: '',
+        heartRate: '',
+        temperature: '',
+        weight: '',
+        notes: ''
+      });
+
+      setTimeout(() => {
+        setShowSuccess(false);
+      }, 3000);
+    } catch (error: any) {
+      alert(error.message || 'Error saving data');
+      console.error('Error saving data:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
