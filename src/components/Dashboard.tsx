@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { TrendingUp, TrendingDown, Activity, Heart, Droplet, Wind, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface HealthMetric {
   label: string;
@@ -19,45 +20,8 @@ interface Alert {
 }
 
 function Dashboard() {
-  const [metrics, setMetrics] = useState<HealthMetric[]>([
-    {
-      label: 'Blood Glucose',
-      value: '142',
-      unit: 'mg/dL',
-      status: 'warning',
-      trend: 'up',
-      icon: Droplet,
-      color: 'text-amber-600'
-    },
-    {
-      label: 'Blood Pressure',
-      value: '128/82',
-      unit: 'mmHg',
-      status: 'normal',
-      trend: 'stable',
-      icon: Heart,
-      color: 'text-rose-600'
-    },
-    {
-      label: 'Heart Rate',
-      value: '74',
-      unit: 'bpm',
-      status: 'normal',
-      trend: 'down',
-      icon: Activity,
-      color: 'text-red-600'
-    },
-    {
-      label: 'SpO2',
-      value: '98',
-      unit: '%',
-      status: 'normal',
-      trend: 'stable',
-      icon: Wind,
-      color: 'text-blue-600'
-    },
-  ]);
-
+  const [userName, setUserName] = useState<string>('');
+  const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([
     {
       id: '1',
@@ -78,6 +42,142 @@ function Dashboard() {
       time: '1 day ago'
     }
   ]);
+
+  useEffect(() => {
+    const fetchUserData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user?.user_metadata?.full_name) {
+          setUserName(user.user_metadata.full_name);
+        } else if (user?.user_metadata?.name) {
+          setUserName(user.user_metadata.name);
+        } else {
+          setUserName('User');
+        }
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+        setUserName('User');
+      }
+    };
+
+    const fetchVitalSigns = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data, error } = await supabase
+            .from('vital_signs')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('recorded_at', { ascending: false })
+            .limit(1);
+
+          if (error) throw error;
+
+          if (data && data.length > 0) {
+            const latestData = data[0];
+            const newMetrics: HealthMetric[] = [];
+
+            // Blood Glucose
+            if (latestData.blood_glucose) {
+              const glucose = latestData.blood_glucose;
+              let status: 'normal' | 'warning' | 'danger' = 'normal';
+              if (glucose > 140) status = 'warning';
+              if (glucose > 180) status = 'danger';
+              
+              newMetrics.push({
+                label: 'Blood Glucose',
+                value: glucose.toString(),
+                unit: 'mg/dL',
+                status,
+                trend: 'stable',
+                icon: Droplet,
+                color: 'text-amber-600'
+              });
+            }
+
+            // Blood Pressure
+            if (latestData.systolic && latestData.diastolic) {
+              const systolic = latestData.systolic;
+              const diastolic = latestData.diastolic;
+              let status: 'normal' | 'warning' | 'danger' = 'normal';
+              if (systolic > 130 || diastolic > 80) status = 'warning';
+              if (systolic > 140 || diastolic > 90) status = 'danger';
+              
+              newMetrics.push({
+                label: 'Blood Pressure',
+                value: `${systolic}/${diastolic}`,
+                unit: 'mmHg',
+                status,
+                trend: 'stable',
+                icon: Heart,
+                color: 'text-rose-600'
+              });
+            }
+
+            // Heart Rate
+            if (latestData.heart_rate) {
+              const heartRate = latestData.heart_rate;
+              let status: 'normal' | 'warning' | 'danger' = 'normal';
+              if (heartRate < 60 || heartRate > 100) status = 'warning';
+              if (heartRate < 50 || heartRate > 120) status = 'danger';
+              
+              newMetrics.push({
+                label: 'Heart Rate',
+                value: heartRate.toString(),
+                unit: 'bpm',
+                status,
+                trend: 'stable',
+                icon: Activity,
+                color: 'text-red-600'
+              });
+            }
+
+            // Temperature
+            if (latestData.temperature) {
+              const temp = latestData.temperature;
+              let status: 'normal' | 'warning' | 'danger' = 'normal';
+              if (temp > 99.5 || temp < 97.0) status = 'warning';
+              if (temp > 101.0 || temp < 95.0) status = 'danger';
+              
+              newMetrics.push({
+                label: 'Body Temperature',
+                value: temp.toString(),
+                unit: '°F',
+                status,
+                trend: 'stable',
+                icon: Wind,
+                color: 'text-blue-600'
+              });
+            }
+
+            // Weight
+            if (latestData.weight) {
+              newMetrics.push({
+                label: 'Weight',
+                value: latestData.weight.toString(),
+                unit: 'lbs',
+                status: 'normal',
+                trend: 'stable',
+                icon: Wind,
+                color: 'text-purple-600'
+              });
+            }
+
+            setMetrics(newMetrics);
+          } else {
+            // No data found, show placeholder message
+            setMetrics([]);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching vital signs:', error);
+        setMetrics([]);
+      }
+    };
+
+    fetchUserData();
+    fetchVitalSigns();
+  }, []);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -107,42 +207,52 @@ function Dashboard() {
     <div className="space-y-6">
       {/* Welcome Section */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <h2 className="text-2xl font-bold text-slate-900">Welcome back, Patient</h2>
+        <h2 className="text-2xl font-bold text-slate-900">Welcome back, {userName}</h2>
         <p className="text-slate-600 mt-1">Here's your health overview for today</p>
       </div>
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {metrics.map((metric, index) => (
-          <div
-            key={index}
-            className={`
-              ${getStatusColor(metric.status)}
-              rounded-2xl border-2 p-6 transition-all duration-200
-              hover:shadow-lg hover:scale-105 cursor-pointer
-            `}
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div className={`p-3 rounded-xl bg-white shadow-sm ${metric.color}`}>
-                <metric.icon className="w-6 h-6" />
+        {metrics.length > 0 ? (
+          metrics.map((metric, index) => (
+            <div
+              key={index}
+              className={`
+                ${getStatusColor(metric.status)}
+                rounded-2xl border-2 p-6 transition-all duration-200
+                hover:shadow-lg hover:scale-105 cursor-pointer
+              `}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className={`p-3 rounded-xl bg-white shadow-sm ${metric.color}`}>
+                  <metric.icon className="w-6 h-6" />
+                </div>
+                {getTrendIcon(metric.trend)}
               </div>
-              {getTrendIcon(metric.trend)}
-            </div>
 
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-600">{metric.label}</p>
-              <div className="flex items-baseline space-x-1">
-                <span className="text-3xl font-bold text-slate-900">{metric.value}</span>
-                <span className="text-sm text-slate-500">{metric.unit}</span>
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-slate-600">{metric.label}</p>
+                <div className="flex items-baseline space-x-1">
+                  <span className="text-3xl font-bold text-slate-900">{metric.value}</span>
+                  <span className="text-sm text-slate-500">{metric.unit}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 mt-4">
+                <div className={`w-2 h-2 rounded-full ${getStatusDot(metric.status)}`} />
+                <span className="text-xs font-medium text-slate-600 capitalize">{metric.status}</span>
               </div>
             </div>
-
-            <div className="flex items-center space-x-2 mt-4">
-              <div className={`w-2 h-2 rounded-full ${getStatusDot(metric.status)}`} />
-              <span className="text-xs font-medium text-slate-600 capitalize">{metric.status}</span>
+          ))
+        ) : (
+          <div className="col-span-full bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center">
+            <div className="text-slate-400 mb-2">
+              <Activity className="w-12 h-12 mx-auto" />
             </div>
+            <h3 className="text-lg font-medium text-slate-600 mb-2">No Health Data Available</h3>
+            <p className="text-slate-500">Start by entering your vital signs in the Data Entry tab to see your health metrics here.</p>
           </div>
-        ))}
+        )}
       </div>
 
       {/* Alerts & Statistics Row */}

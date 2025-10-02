@@ -29,6 +29,33 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
 
   const [showSuccess, setShowSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastEntryDate, setLastEntryDate] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchLastEntry = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data, error } = await supabase
+            .from('vital_signs')
+            .select('recorded_at')
+            .eq('user_id', user.id)
+            .order('recorded_at', { ascending: false })
+            .limit(1);
+
+          if (error) throw error;
+
+          if (data && data.length > 0) {
+            setLastEntryDate(data[0].recorded_at);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching last entry:', error);
+      }
+    };
+
+    fetchLastEntry();
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -113,6 +140,13 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
         <div className="mb-8">
           <h2 className="text-2xl font-bold text-slate-900">Record Vitals</h2>
           <p className="text-slate-600 mt-2">Enter your daily health measurements</p>
+          {lastEntryDate && (
+            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-700">
+                <span className="font-medium">Last entry:</span> {new Date(lastEntryDate).toLocaleString()}
+              </p>
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">

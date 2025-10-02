@@ -357,106 +357,112 @@ function RiskAssessment() {
       <div className="space-y-6">
         <h3 className="text-2xl font-bold text-slate-900">Health Metrics Trends</h3>
         
-        {/* Blood Pressure Chart */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h4 className="text-lg font-bold text-slate-900 mb-4">Blood Pressure Trends</h4>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="bloodPressureSystolic" 
-                  stroke="#ef4444" 
-                  strokeWidth={2}
-                  name="Systolic BP"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="bloodPressureDiastolic" 
-                  stroke="#f97316" 
-                  strokeWidth={2}
-                  name="Diastolic BP"
-                />
-              </LineChart>
-            </ResponsiveContainer>
+        {/* First Row - Blood Pressure and Heart Rate */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Blood Pressure Chart */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h4 className="text-lg font-bold text-slate-900 mb-4">Blood Pressure Trends</h4>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="bloodPressureSystolic" 
+                    stroke="#ef4444" 
+                    strokeWidth={2}
+                    name="Systolic BP"
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="bloodPressureDiastolic" 
+                    stroke="#f97316" 
+                    strokeWidth={2}
+                    name="Diastolic BP"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Heart Rate Chart */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h4 className="text-lg font-bold text-slate-900 mb-4">Heart Rate Trends</h4>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="heartRate" 
+                    stroke="#dc2626" 
+                    strokeWidth={2}
+                    name="Heart Rate (bpm)"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
-        {/* Heart Rate Chart */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h4 className="text-lg font-bold text-slate-900 mb-4">Heart Rate Trends</h4>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="heartRate" 
-                  stroke="#dc2626" 
-                  strokeWidth={2}
-                  name="Heart Rate (bpm)"
-                />
-              </LineChart>
-            </ResponsiveContainer>
+        {/* Second Row - Temperature and Weight */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Body Temperature Chart */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h4 className="text-lg font-bold text-slate-900 mb-4">Body Temperature Trends</h4>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis domain={['dataMin - 1', 'dataMax + 1']} />
+                  <Tooltip />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="temperature" 
+                    stroke="#059669" 
+                    strokeWidth={2}
+                    name="Temperature (°F)"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Weight Chart */}
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h4 className="text-lg font-bold text-slate-900 mb-4">Weight Trends</h4>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="weight" 
+                    stroke="#7c3aed" 
+                    strokeWidth={2}
+                    name="Weight (lbs)"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
 
-        {/* Body Temperature Chart */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h4 className="text-lg font-bold text-slate-900 mb-4">Body Temperature Trends</h4>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis domain={['dataMin - 1', 'dataMax + 1']} />
-                <Tooltip />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="temperature" 
-                  stroke="#059669" 
-                  strokeWidth={2}
-                  name="Temperature (°F)"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Weight Chart */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h4 className="text-lg font-bold text-slate-900 mb-4">Weight Trends</h4>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="weight" 
-                  stroke="#7c3aed" 
-                  strokeWidth={2}
-                  name="Weight (lbs)"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Steps Bar Chart */}
+        {/* Third Row - Steps Bar Chart (Full Width) */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
           <h4 className="text-lg font-bold text-slate-900 mb-4">Weekly Steps</h4>
           <div className="h-80">
