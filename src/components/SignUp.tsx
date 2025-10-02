@@ -8,6 +8,7 @@ export default function SignUp() {
   const [age, setAge] = useState('')
   const [nationality, setNationality] = useState('')
   const [dateOfBirth, setDateOfBirth] = useState('')
+  const [phoneNumber, setPhoneNumber] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -18,7 +19,7 @@ export default function SignUp() {
     setError(null)
     setSuccess(null)
     
-    if (!fullName || !age || !nationality || !dateOfBirth || !email || !password) {
+    if (!fullName || !age || !nationality || !dateOfBirth || !phoneNumber || !email || !password) {
       setError('Please fill in all fields')
       return
     }
@@ -36,6 +37,7 @@ export default function SignUp() {
             age: parseInt(age),
             nationality,
             date_of_birth: dateOfBirth,
+            phone_number: phoneNumber,
           },
           emailRedirectTo: window.location.origin,
         },
@@ -50,6 +52,7 @@ export default function SignUp() {
       setAge('')
       setNationality('')
       setDateOfBirth('')
+      setPhoneNumber('')
       setEmail('')
       setPassword('')
       
@@ -144,6 +147,22 @@ export default function SignUp() {
                 value={dateOfBirth}
                 onChange={(e) => setDateOfBirth(e.target.value)}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+              />
+            </div>
+            
+            <div>
+              <label htmlFor="phone-number" className="block text-sm font-medium text-gray-700">
+                Phone Number
+              </label>
+              <input
+                id="phone-number"
+                name="phoneNumber"
+                type="tel"
+                required
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm p-2 border"
+                placeholder="+1 (555) 123-4567"
               />
             </div>
             

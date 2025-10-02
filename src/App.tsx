@@ -11,6 +11,7 @@ import { Activity, Heart, Stethoscope, FileText, Smartphone } from 'lucide-react
 import { supabase } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
 
+
 type TabType = 'dashboard' | 'entry' | 'risk' | 'care' | 'devices';
 
 function App() {
@@ -92,7 +93,7 @@ function App() {
                       </button>
                     </div>
                   </div>
-
+                
                   {/* Navigation Tabs */}
                   <nav className="flex space-x-1 -mb-px">
                     {tabs.map(({ id, label, icon: Icon }) => (
