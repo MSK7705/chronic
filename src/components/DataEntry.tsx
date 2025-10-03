@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Heart, Droplet, Activity, Thermometer, Weight, Save, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import ReactSelect from "react-select";
 
 interface DataEntryProps {
   onDataSubmit: () => void;
@@ -14,54 +15,84 @@ interface VitalData {
   temperature: string;
   weight: string;
   notes: string;
+  breakfast: string;   // NEW
+  lunch: string;       // NEW
+  dinner: string;      // NEW
 }
 
 function DataEntry({ onDataSubmit }: DataEntryProps) {
+  // --- State ---
   const [formData, setFormData] = useState<VitalData>({
-    bloodGlucose: '',
-    systolic: '',
-    diastolic: '',
-    heartRate: '',
-    temperature: '',
-    weight: '',
-    notes: ''
+    bloodGlucose: '', systolic: '', diastolic: '', heartRate: '',
+    temperature: '', weight: '', notes: '',
+    // UPDATED: Default state for meals is now an empty array
+    breakfast: [],
+    lunch: [],
+    dinner: []
   });
 
+  const [foodOptions, setFoodOptions] = useState<FoodOption[]>([]);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastEntryDate, setLastEntryDate] = useState<string | null>(null);
 
+  // Fetch last entry + food items
   useEffect(() => {
-    const fetchLastEntry = async () => {
+    const fetchData = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const { data, error } = await supabase
+          const { data: last, error: lastErr } = await supabase
             .from('vital_signs')
             .select('recorded_at')
             .eq('user_id', user.id)
             .order('recorded_at', { ascending: false })
             .limit(1);
 
-          if (error) throw error;
-
-          if (data && data.length > 0) {
-            setLastEntryDate(data[0].recorded_at);
+          if (lastErr) throw lastErr;
+          if (last && last.length > 0) {
+            setLastEntryDate(last[0].recorded_at);
           }
         }
+
+        // Fetch food items
+        const { data: foods, error: foodErr } = await supabase
+          .from('food_items')
+          .select('food_name');
+
+        if (foodErr) {
+            console.error("Error fetching food items:", foodErr);
+            throw foodErr;
+        }
+        
+        if (foods) {
+          // THIS IS THE FIX:
+          // Prepare the options array in the { value, label } format
+          // and save it to the correct state variable.
+          const options = foods.map((f: { food_name: string }) => ({
+            value: f.food_name,
+            label: f.food_name,
+          }));
+          setFoodOptions(options);
+        }
+
       } catch (error) {
-        console.error('Error fetching last entry:', error);
+        console.error('Error fetching data:', error);
       }
     };
 
-    fetchLastEntry();
+    fetchData();
   }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+   const handleMultiSelectChange = (name: keyof VitalData, selectedOptions: MultiValue<FoodOption>) => {
+    const values = selectedOptions ? selectedOptions.map(option => option.value) : [];
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: values
     }));
   };
 
@@ -70,17 +101,11 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
     setIsSubmitting(true);
 
     try {
-      // Get current user
       const { data: { user } } = await supabase.auth.getUser();
-      
-      if (!user) {
-        throw new Error('You must be logged in to submit data');
-      }
+      if (!user) throw new Error('You must be logged in to submit data');
 
-      // Get user's full name from metadata
       const userName = user.user_metadata?.full_name || 'Unknown User';
-      
-      // Save data to Supabase
+
       const { error } = await supabase
         .from('vital_signs')
         .insert({
@@ -93,6 +118,9 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
           temperature: parseFloat(formData.temperature) || null,
           weight: parseFloat(formData.weight) || null,
           notes: formData.notes,
+          breakfast: formData.breakfast.join(', '),
+          lunch: formData.lunch.join(', '),
+          dinner: formData.dinner.join(', '),
           recorded_at: new Date().toISOString()
         });
 
@@ -102,19 +130,12 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
       onDataSubmit();
 
       // Reset form
-      setFormData({
-        bloodGlucose: '',
-        systolic: '',
-        diastolic: '',
-        heartRate: '',
-        temperature: '',
-        weight: '',
-        notes: ''
+     setFormData({
+        bloodGlucose: '', systolic: '', diastolic: '', heartRate: '',
+        temperature: '', weight: '', notes: '', breakfast: [], lunch: [], dinner: []
       });
 
-      setTimeout(() => {
-        setShowSuccess(false);
-      }, 3000);
+      setTimeout(() => setShowSuccess(false), 3000);
     } catch (error: any) {
       alert(error.message || 'Error saving data');
       console.error('Error saving data:', error);
@@ -237,6 +258,51 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
                   className="w-full px-4 py-3 rounded-lg border-2 border-slate-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 transition-all duration-200 outline-none"
                   placeholder="e.g., 72"
                   required
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* New Section for Meals */}
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-slate-900">Meals</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Breakfast */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Breakfast</label>
+                <ReactSelect
+                  isMulti // <-- ADD THIS
+                  options={foodOptions}
+                  value={foodOptions.filter(option => formData.breakfast.includes(option.value))}
+                  onChange={selected => handleMultiSelectChange('breakfast', selected)}
+                  placeholder="Select foods..."
+                  isClearable
+                />
+              </div>
+
+              {/* Lunch */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Lunch</label>
+                <ReactSelect
+                  isMulti // <-- ADD THIS
+                  options={foodOptions}
+                  value={foodOptions.filter(option => formData.lunch.includes(option.value))}
+                  onChange={selected => handleMultiSelectChange('lunch', selected)}
+                  placeholder="Select foods..."
+                  isClearable
+                />
+              </div>
+
+              {/* Dinner */}
+             <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Dinner</label>
+                <ReactSelect
+                  isMulti // <-- ADD THIS
+                  options={foodOptions}
+                  value={foodOptions.filter(option => formData.dinner.includes(option.value))}
+                  onChange={selected => handleMultiSelectChange('dinner', selected)}
+                  placeholder="Select foods..."
+                  isClearable
                 />
               </div>
             </div>
