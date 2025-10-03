@@ -85,7 +85,7 @@ function App() {
                           />
                         </div>
                         <div>
-                          <h1 className="text-3xl font-bold text-slate-900">HealthGuard</h1>
+                          <h1 className="text-3xl font-bold text-slate-900">Health Guard</h1>
                           <p className="text-sm text-slate-600 mt-0.5">Chronic Disease Management Platform</p>
                         </div>
                       </div>
