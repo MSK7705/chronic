@@ -7,14 +7,18 @@ import CarePlan from './components/CarePlan';
 import WearableSync from './components/WearableSync';
 import Login from './components/Login';
 import SignUp from './components/SignUp';
+import BluetoothConnectButton from './components/BluetoothConnectButton';
+import BluetoothConnect from './components/BluetoothConnect';
 import { Activity, Heart, Stethoscope, FileText, Smartphone } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
-
+import './i18n';
+import { useTranslation } from 'react-i18next';
 
 type TabType = 'dashboard' | 'entry' | 'risk' | 'care' | 'devices';
 
 function App() {
+  const { t, i18n } = useTranslation();
   const [session, setSession] = useState<Session | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -85,12 +89,29 @@ function App() {
                           <p className="text-sm text-slate-600 mt-0.5">Chronic Disease Management Platform</p>
                         </div>
                       </div>
+                       <div className="flex items-center space-x-4">
+                        <select
+                          aria-label="Language selector"
+                          className="px-3 py-2 border rounded-md text-sm"
+                          value={i18n.language}
+                          onChange={(e) => i18n.changeLanguage(e.target.value)}
+                        >
+                          <option value="en">English</option>
+                          <option value="es">Español</option>
+                          <option value="fr">Français</option>
+                          <option value="de">Deutsch</option>
+                          <option value="ar">العربية</option>
+                          <option value="zh">中文</option>
+                          <option value="hi">हिन्दी</option>
+                        </select>
+
                       <button 
                         onClick={handleSignOut}
                         className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-md hover:bg-slate-200 transition-colors"
                       >
                         Sign Out
                       </button>
+                      </div>
                     </div>
                   </div>
                 
@@ -123,7 +144,17 @@ function App() {
                   {activeTab === 'entry' && <DataEntry onDataSubmit={handleDataUpdate} />}
                   {activeTab === 'risk' && <RiskAssessment />}
                   {activeTab === 'care' && <CarePlan />}
-                  {activeTab === 'devices' && <WearableSync onSync={handleDataUpdate} />}
+                  {activeTab === 'devices' && (
+                    <>
+                      <WearableSync onSync={handleDataUpdate} />
+                      <div style={{ marginTop: 24 }}>
+                        <BluetoothConnectButton />
+                      </div>
+                      <div style={{ marginTop: 24 }}>
+                        <BluetoothConnect />
+                      </div>
+                    </>
+                  )}
                 </div>
               </main>
             </div>
