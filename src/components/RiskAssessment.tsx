@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, TrendingUp, Shield, Activity, Heart, Eye, Siren } from 'lucide-react';
+import { AlertTriangle, TrendingUp, Shield, Activity, Heart, Eye, Siren, ChevronDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { supabase } from '../lib/supabase';
 
@@ -13,6 +13,8 @@ interface RiskFactor {
 
 interface ChartDataPoint {
   date: string;
+  time?: string;
+  day?: string;
   bloodPressureSystolic: number;
   bloodPressureDiastolic: number;
   heartRate: number;
@@ -22,8 +24,11 @@ interface ChartDataPoint {
 
 interface StepsDataPoint {
   day: string;
+  time?: string;
   steps: number;
 }
+
+type TimePeriod = '1day' | '1week' | '1month';
 
 function RiskAssessment() {
   const [riskFactors] = useState<RiskFactor[]>([
@@ -59,22 +64,44 @@ function RiskAssessment() {
 
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stepsData, setStepsData] = useState<StepsDataPoint[]>([]);
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>('1week');
 
   useEffect(() => {
     fetchVitalSignsData();
-  }, []);
+  }, [timePeriod]);
 
   const fetchVitalSignsData = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      // Calculate date range based on selected time period
+      const now = new Date();
+      let startDate = new Date();
+      let limit = 30;
+
+      switch (timePeriod) {
+        case '1day':
+          startDate.setHours(0, 0, 0, 0);
+          limit = 24; // Hourly data for 1 day
+          break;
+        case '1week':
+          startDate.setDate(now.getDate() - 7);
+          limit = 7; // Daily data for 1 week
+          break;
+        case '1month':
+          startDate.setDate(now.getDate() - 30);
+          limit = 30; // Daily data for 1 month
+          break;
+      }
+
       const { data, error } = await supabase
         .from('vital_signs')
         .select('*')
         .eq('user_id', user.id)
+        .gte('recorded_at', startDate.toISOString())
         .order('recorded_at', { ascending: true })
-        .limit(30);
+        .limit(limit);
 
       if (error) {
         console.error('Error fetching vital signs:', error);
@@ -85,14 +112,37 @@ function RiskAssessment() {
       }
 
       if (data && data.length > 0) {
-        const formattedData = data.map((item, index) => ({
-          date: new Date(item.recorded_at).toLocaleDateString(),
-          bloodPressureSystolic: item.systolic || 0,
-          bloodPressureDiastolic: item.diastolic || 0,
-          heartRate: item.heart_rate || 0,
-          temperature: item.temperature || 0,
-          weight: item.weight || 0,
-        }));
+        const formattedData = data.map((item, index) => {
+          const recordedDate = new Date(item.recorded_at);
+          let dateLabel = '';
+          let timeLabel = '';
+          let dayLabel = '';
+
+          switch (timePeriod) {
+            case '1day':
+              timeLabel = recordedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              dateLabel = timeLabel;
+              break;
+            case '1week':
+              dayLabel = recordedDate.toLocaleDateString([], { weekday: 'short' });
+              dateLabel = dayLabel;
+              break;
+            case '1month':
+              dateLabel = recordedDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+              break;
+          }
+
+          return {
+            date: dateLabel,
+            time: timeLabel,
+            day: dayLabel,
+            bloodPressureSystolic: item.systolic || 0,
+            bloodPressureDiastolic: item.diastolic || 0,
+            heartRate: item.heart_rate || 0,
+            temperature: item.temperature || 0,
+            weight: item.weight || 0,
+          };
+        });
         setChartData(formattedData);
 
         // Generate mock steps data since it's not in our current schema
@@ -111,30 +161,126 @@ function RiskAssessment() {
 
   const generateMockData = (): ChartDataPoint[] => {
     const data: ChartDataPoint[] = [];
-    for (let i = 0; i < 14; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - (13 - i));
-      data.push({
-        date: date.toLocaleDateString(),
-        bloodPressureSystolic: 120 + Math.random() * 20,
-        bloodPressureDiastolic: 80 + Math.random() * 10,
-        heartRate: 70 + Math.random() * 20,
-        temperature: 98.6 + (Math.random() - 0.5) * 2,
-        weight: 150 + Math.random() * 10,
-      });
+    const now = new Date();
+
+    switch (timePeriod) {
+      case '1day':
+        // Generate hourly data for 1 day
+        for (let i = 0; i < 24; i++) {
+          const hour = new Date(now);
+          hour.setHours(i, 0, 0, 0);
+          const timeLabel = hour.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          
+          data.push({
+            date: timeLabel,
+            time: timeLabel,
+            day: '',
+            bloodPressureSystolic: 120 + Math.random() * 20,
+            bloodPressureDiastolic: 80 + Math.random() * 10,
+            heartRate: 70 + Math.random() * 20,
+            temperature: 98.6 + Math.random() * 2,
+            weight: 150 + Math.random() * 10,
+          });
+        }
+        break;
+
+      case '1week':
+        // Generate daily data for 1 week
+        const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        for (let i = 6; i >= 0; i--) {
+          const day = new Date(now);
+          day.setDate(now.getDate() - i);
+          const dayLabel = daysOfWeek[day.getDay()];
+          
+          data.push({
+            date: dayLabel,
+            time: '',
+            day: dayLabel,
+            bloodPressureSystolic: 120 + Math.random() * 20,
+            bloodPressureDiastolic: 80 + Math.random() * 10,
+            heartRate: 70 + Math.random() * 20,
+            temperature: 98.6 + Math.random() * 2,
+            weight: 150 + Math.random() * 10,
+          });
+        }
+        break;
+
+      case '1month':
+        // Generate daily data for 1 month
+        for (let i = 29; i >= 0; i--) {
+          const day = new Date(now);
+          day.setDate(now.getDate() - i);
+          const dateLabel = day.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          
+          data.push({
+            date: dateLabel,
+            time: '',
+            day: '',
+            bloodPressureSystolic: 120 + Math.random() * 20,
+            bloodPressureDiastolic: 80 + Math.random() * 10,
+            heartRate: 70 + Math.random() * 20,
+            temperature: 98.6 + Math.random() * 2,
+            weight: 150 + Math.random() * 10,
+          });
+        }
+        break;
     }
+
     return data;
   };
 
   const generateMockStepsData = (): StepsDataPoint[] => {
     const data: StepsDataPoint[] = [];
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    days.forEach(day => {
-      data.push({
-        day,
-        steps: Math.floor(5000 + Math.random() * 5000),
-      });
-    });
+    const now = new Date();
+
+    switch (timePeriod) {
+      case '1day':
+        // Generate hourly data for 1 day
+        for (let i = 0; i < 24; i++) {
+          const hour = new Date(now);
+          hour.setHours(i, 0, 0, 0);
+          const timeLabel = hour.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          
+          data.push({
+            day: timeLabel,
+            time: timeLabel,
+            steps: Math.floor(Math.random() * 500) + 100, // 100-600 steps per hour
+          });
+        }
+        break;
+
+      case '1week':
+        // Generate daily data for 1 week
+        const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        for (let i = 6; i >= 0; i--) {
+          const day = new Date(now);
+          day.setDate(now.getDate() - i);
+          const dayLabel = daysOfWeek[day.getDay()];
+          
+          data.push({
+            day: dayLabel,
+            time: '',
+            steps: Math.floor(Math.random() * 5000) + 3000, // 3000-8000 steps per day
+          });
+        }
+        break;
+
+      case '1month':
+        // Generate daily data for 1 month
+        for (let i = 29; i >= 0; i--) {
+          const day = new Date(now);
+          day.setDate(now.getDate() - i);
+          const dateLabel = day.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          
+          data.push({
+            day: dateLabel,
+            time: '',
+            steps: Math.floor(Math.random() * 5000) + 3000, // 3000-8000 steps per day
+          });
+        }
+        break;
+    }
+
     return data;
   };
 
@@ -355,7 +501,23 @@ function RiskAssessment() {
 
       {/* Health Metrics Charts */}
       <div className="space-y-6">
-        <h3 className="text-2xl font-bold text-slate-900">Health Metrics Trends</h3>
+        <div className="flex justify-between items-center">
+          <h3 className="text-2xl font-bold text-slate-900">Health Metrics Trends</h3>
+          
+          {/* Time Period Dropdown */}
+          <div className="relative">
+            <select
+              value={timePeriod}
+              onChange={(e) => setTimePeriod(e.target.value as TimePeriod)}
+              className="appearance-none bg-white border border-slate-300 rounded-lg px-4 py-2 pr-8 text-sm font-medium text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="1day">1 Day</option>
+              <option value="1week">1 Week</option>
+              <option value="1month">1 Month</option>
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+          </div>
+        </div>
         
         {/* First Row - Blood Pressure and Heart Rate */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
