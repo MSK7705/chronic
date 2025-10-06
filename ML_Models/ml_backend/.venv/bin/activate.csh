@@ -8,7 +8,7 @@ alias deactivate 'test $?_OLD_VIRTUAL_PATH != 0 && setenv PATH "$_OLD_VIRTUAL_PA
 # Unset irrelevant variables.
 deactivate nondestructive
 
-setenv VIRTUAL_ENV '/Volumes/Main disk/GIt Hub Repo/Chronic disease management 2/chronic/ML_Models/ml_backend/.venv'
+setenv VIRTUAL_ENV '/Volumes/Main disk/GIt Hub Repo/chronic/ML_Models/ml_backend/.venv'
 
 set _OLD_VIRTUAL_PATH="$PATH"
 setenv PATH "$VIRTUAL_ENV/"bin":$PATH"

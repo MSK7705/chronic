@@ -2,9 +2,22 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, TrendingUp, Shield, Activity, Heart, Eye, Siren, ChevronDown, Brain } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { supabase } from '../lib/supabase';
+import { mlService } from '../services/mlService';
+import { carePlanService } from '../services/carePlanService';
 import MLPredictionForm from './MLPredictionForm';
 import MLPredictionResults from './MLPredictionResults';
 import { MLPredictionResponse } from '../services/mlService';
+
+interface AIRiskAnalysis {
+  overallRiskScore: number;
+  riskLevel: 'low' | 'moderate' | 'high' | 'very-high';
+  conditions: string[];
+  riskFactors: string[];
+  recommendations: string[];
+  complicationRisk: number;
+  emergencyVisits: number;
+  adherenceRate: number;
+}
 
 interface RiskFactor {
   name: string;
@@ -34,46 +47,183 @@ interface StepsDataPoint {
 type TimePeriod = '1day' | '1week' | '1month';
 
 function RiskAssessment() {
-  const [riskFactors] = useState<RiskFactor[]>([
-    {
-      name: 'Cardiovascular Risk',
-      level: 'moderate',
-      score: 45,
-      description: 'Blood pressure trends show occasional elevations',
-      icon: Heart
-    },
-    {
-      name: 'Kidney Disease',
-      level: 'low',
-      score: 18,
-      description: 'Glucose control stable, minimal risk factors',
-      icon: Activity
-    },
-    {
-      name: 'Retinopathy',
-      level: 'low',
-      score: 22,
-      description: 'Regular screenings show healthy progression',
-      icon: Eye
-    },
-    {
-      name: 'Neuropathy',
-      level: 'moderate',
-      score: 38,
-      description: 'Monitor for symptoms, maintain glucose control',
-      icon: TrendingUp
-    }
-  ]);
 
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stepsData, setStepsData] = useState<StepsDataPoint[]>([]);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('1week');
   const [mlPredictions, setMlPredictions] = useState<(MLPredictionResponse & { modelType: string })[]>([]);
   const [showMLForm, setShowMLForm] = useState(false);
+  const [overallRiskScore, setOverallRiskScore] = useState<number>(28);
+  const [aiRiskAnalysis, setAiRiskAnalysis] = useState<AIRiskAnalysis | null>(null);
+  const [riskFactors, setRiskFactors] = useState<RiskFactor[]>([]);
 
   useEffect(() => {
     fetchVitalSignsData();
+    fetchHealthPredictions();
+    fetchMLPredictions();
+    fetchAIRiskAnalysis();
   }, [timePeriod]);
+
+  const fetchAIRiskAnalysis = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Get AI-generated health data analysis
+      const analysis = await carePlanService.analyzeHealthData(user.id);
+      
+      const aiAnalysis: AIRiskAnalysis = {
+        overallRiskScore: Math.round((1 - analysis.healthScore / 100) * 100),
+        riskLevel: analysis.complicationRisk > 0.8 ? 'very-high' : 
+                  analysis.complicationRisk > 0.6 ? 'high' :
+                  analysis.complicationRisk > 0.3 ? 'moderate' : 'low',
+        conditions: analysis.conditions,
+        riskFactors: analysis.riskFactors,
+        recommendations: [], // Will be populated from care plan
+        complicationRisk: analysis.complicationRisk,
+        emergencyVisits: analysis.emergencyVisits,
+        adherenceRate: analysis.adherenceRate
+      };
+
+      setAiRiskAnalysis(aiAnalysis);
+      setOverallRiskScore(aiAnalysis.overallRiskScore);
+
+      // Convert AI analysis to risk factors for display
+      const aiRiskFactors: RiskFactor[] = analysis.riskFactors.map((factor, index) => {
+        const riskScore = Math.round(analysis.complicationRisk * 100 * (0.8 + index * 0.1));
+        return {
+          name: factor,
+          level: riskScore > 70 ? 'high' : riskScore > 40 ? 'moderate' : 'low',
+          score: riskScore,
+          description: `AI-detected risk factor based on health data analysis`,
+          icon: getIconForRiskFactor(factor)
+        };
+      });
+
+      setRiskFactors(aiRiskFactors);
+    } catch (error) {
+      console.error('Error fetching AI risk analysis:', error);
+    }
+  };
+
+  const getIconForRiskFactor = (factor: string) => {
+    if (factor.toLowerCase().includes('cardiovascular') || factor.toLowerCase().includes('heart')) return Heart;
+    if (factor.toLowerCase().includes('kidney') || factor.toLowerCase().includes('renal')) return Activity;
+    if (factor.toLowerCase().includes('eye') || factor.toLowerCase().includes('retina')) return Eye;
+    if (factor.toLowerCase().includes('nerve') || factor.toLowerCase().includes('neuro')) return TrendingUp;
+    if (factor.toLowerCase().includes('diabetes') || factor.toLowerCase().includes('glucose')) return AlertTriangle;
+    return Shield;
+  };
+
+  const fetchMLPredictions = async () => {
+    try {
+      const predictions = await mlService.getUserPredictions();
+      setMlPredictions(predictions);
+      
+      // Update risk factors based on stored predictions
+      if (predictions.length > 0) {
+        updateRiskFactorsFromML(predictions);
+      }
+    } catch (error) {
+      console.error('Error fetching ML predictions:', error);
+    }
+  };
+
+  const fetchHealthPredictions = async () => {
+    try {
+      // First try to get from new health_score table
+      const latestScore = await mlService.getLatestHealthScore();
+      if (latestScore) {
+        setOverallRiskScore(100 - latestScore.health_score); // Convert health score to risk score
+        
+        // Update risk factors based on stored risk factors
+        const riskFactors = latestScore.risk_factors || {};
+        setRiskFactors([
+          {
+            name: 'Cardiovascular Risk',
+            level: riskFactors.cardiovascular > 60 ? 'high' : riskFactors.cardiovascular > 30 ? 'moderate' : 'low',
+            score: riskFactors.cardiovascular || Math.round(latestScore.complication_risk * 0.8),
+            description: riskFactors.cardiovascular > 60 ? 'High cardiovascular risk detected' : 
+                        riskFactors.cardiovascular > 30 ? 'Moderate cardiovascular risk' : 'Low cardiovascular risk',
+            icon: Heart
+          },
+          {
+            name: 'Kidney Disease',
+            level: riskFactors.renal > 50 ? 'moderate' : 'low',
+            score: riskFactors.renal || Math.round(latestScore.complication_risk * 0.95),
+            description: riskFactors.renal > 50 ? 'Monitor kidney function' : 'Kidney function stable',
+            icon: Activity
+          },
+          {
+            name: 'Retinopathy',
+            level: riskFactors.metabolic > 40 ? 'moderate' : 'low',
+            score: riskFactors.metabolic || Math.round(latestScore.complication_risk * 0.9),
+            description: riskFactors.metabolic > 40 ? 'Regular eye exams recommended' : 'Eye health stable',
+            icon: Eye
+          },
+          {
+            name: 'Neuropathy',
+            level: riskFactors.respiratory > 45 ? 'moderate' : 'low',
+            score: riskFactors.respiratory || Math.round(latestScore.complication_risk * 0.85),
+            description: riskFactors.respiratory > 45 ? 'Monitor for nerve symptoms' : 'Nerve function stable',
+            icon: TrendingUp
+          }
+        ]);
+        return;
+      }
+
+      // Fallback to old health_predictions table
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: latestPrediction } = await supabase
+        .from('health_predictions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('recorded_at', { ascending: false })
+        .limit(1);
+
+      if (latestPrediction && latestPrediction.length > 0) {
+        const pred = latestPrediction[0];
+        setOverallRiskScore(Math.round(pred.complication_risk));
+
+        // Update risk factors based on predictions
+        setRiskFactors([
+          {
+            name: 'Cardiovascular Risk',
+            level: pred.complication_risk > 60 ? 'high' : pred.complication_risk > 30 ? 'moderate' : 'low',
+            score: Math.round(pred.complication_risk),
+            description: pred.complication_risk > 60 ? 'High cardiovascular risk detected' : 
+                        pred.complication_risk > 30 ? 'Moderate cardiovascular risk' : 'Low cardiovascular risk',
+            icon: Heart
+          },
+          {
+            name: 'Kidney Disease',
+            level: pred.complication_risk > 50 ? 'moderate' : 'low',
+            score: Math.round(pred.complication_risk * 0.4),
+            description: pred.complication_risk > 50 ? 'Monitor kidney function' : 'Kidney function stable',
+            icon: Activity
+          },
+          {
+            name: 'Retinopathy',
+            level: pred.complication_risk > 40 ? 'moderate' : 'low',
+            score: Math.round(pred.complication_risk * 0.5),
+            description: pred.complication_risk > 40 ? 'Regular eye exams recommended' : 'Eye health stable',
+            icon: Eye
+          },
+          {
+            name: 'Neuropathy',
+            level: pred.complication_risk > 45 ? 'moderate' : 'low',
+            score: Math.round(pred.complication_risk * 0.85),
+            description: pred.complication_risk > 45 ? 'Monitor for nerve symptoms' : 'Nerve function stable',
+            icon: TrendingUp
+          }
+        ]);
+      }
+    } catch (error) {
+      console.error('Error fetching health predictions:', error);
+    }
+  };
 
   const fetchVitalSignsData = async () => {
     try {
@@ -163,6 +313,25 @@ function RiskAssessment() {
       setStepsData(generateMockStepsData());
     }
   };
+
+  // Realtime refresh on new vital_signs inserts
+  useEffect(() => {
+    const channel = supabase
+      .channel('realtime:risk:vital_signs')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'vital_signs' },
+        () => {
+          fetchVitalSignsData();
+          fetchHealthPredictions();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [timePeriod]);
 
   const generateMockData = (): ChartDataPoint[] => {
     const data: ChartDataPoint[] = [];
@@ -289,7 +458,6 @@ function RiskAssessment() {
     return data;
   };
 
-  const overallRiskScore = 28;
 
   const getRiskColor = (level: string) => {
     switch (level) {
@@ -331,13 +499,214 @@ function RiskAssessment() {
   const handleMLPrediction = (result: MLPredictionResponse & { modelType: string }) => {
     setMlPredictions(prev => {
       const filtered = prev.filter(p => p.modelType !== result.modelType);
-      return [...filtered, result];
+      const updated = [...filtered, result];
+      
+      // Update individual risk factors based on ML predictions
+      updateRiskFactorsFromML(updated);
+      
+      return updated;
     });
     setShowMLForm(false);
   };
 
-  const clearMLResults = () => {
-    setMlPredictions([]);
+  const updateRiskFactorsFromML = (predictions: (MLPredictionResponse & { modelType: string })[]) => {
+    const updatedFactors = [...riskFactors];
+    
+    predictions.forEach(prediction => {
+      const riskScore = Math.round(prediction.riskProbability * 100);
+      const riskLevel = prediction.riskLevel;
+      
+      switch (prediction.modelType) {
+        case 'heart':
+          const heartIndex = updatedFactors.findIndex(f => f.name === 'Cardiovascular Risk');
+          if (heartIndex !== -1) {
+            updatedFactors[heartIndex] = {
+              ...updatedFactors[heartIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for heart disease (${riskScore}% probability)`
+            };
+          }
+          break;
+          
+        case 'diabetes':
+          const diabetesIndex = updatedFactors.findIndex(f => f.name === 'Diabetes Risk');
+          if (diabetesIndex === -1) {
+            updatedFactors.push({
+              name: 'Diabetes Risk',
+              level: riskLevel,
+              score: riskScore,
+              description: `AI Assessment: ${riskLevel} risk for diabetes (${riskScore}% probability)`,
+              icon: Activity
+            });
+          } else {
+            updatedFactors[diabetesIndex] = {
+              ...updatedFactors[diabetesIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for diabetes (${riskScore}% probability)`
+            };
+          }
+          break;
+          
+        case 'hypertension':
+          const hyperIndex = updatedFactors.findIndex(f => f.name === 'Hypertension Risk');
+          if (hyperIndex === -1) {
+            updatedFactors.push({
+              name: 'Hypertension Risk',
+              level: riskLevel,
+              score: riskScore,
+              description: `AI Assessment: ${riskLevel} risk for hypertension (${riskScore}% probability)`,
+              icon: Heart
+            });
+          } else {
+            updatedFactors[hyperIndex] = {
+              ...updatedFactors[hyperIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for hypertension (${riskScore}% probability)`
+            };
+          }
+          break;
+          
+        case 'ckd':
+          const ckdIndex = updatedFactors.findIndex(f => f.name === 'Kidney Disease');
+          if (ckdIndex !== -1) {
+            updatedFactors[ckdIndex] = {
+              ...updatedFactors[ckdIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for chronic kidney disease (${riskScore}% probability)`
+            };
+          }
+          break;
+          
+        case 'asthma':
+          const asthmaIndex = updatedFactors.findIndex(f => f.name === 'Asthma Risk');
+          if (asthmaIndex === -1) {
+            updatedFactors.push({
+              name: 'Asthma Risk',
+              level: riskLevel,
+              score: riskScore,
+              description: `AI Assessment: ${riskLevel} risk for asthma (${riskScore}% probability)`,
+              icon: Activity
+            });
+          } else {
+            updatedFactors[asthmaIndex] = {
+              ...updatedFactors[asthmaIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for asthma (${riskScore}% probability)`
+            };
+          }
+          break;
+          
+        case 'arthritis':
+          const arthritisIndex = updatedFactors.findIndex(f => f.name === 'Arthritis Risk');
+          if (arthritisIndex === -1) {
+            updatedFactors.push({
+              name: 'Arthritis Risk',
+              level: riskLevel,
+              score: riskScore,
+              description: `AI Assessment: ${riskLevel} risk for arthritis (${riskScore}% probability)`,
+              icon: TrendingUp
+            });
+          } else {
+            updatedFactors[arthritisIndex] = {
+              ...updatedFactors[arthritisIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for arthritis (${riskScore}% probability)`
+            };
+          }
+          break;
+          
+        case 'copd':
+          const copdIndex = updatedFactors.findIndex(f => f.name === 'COPD Risk');
+          if (copdIndex === -1) {
+            updatedFactors.push({
+              name: 'COPD Risk',
+              level: riskLevel,
+              score: riskScore,
+              description: `AI Assessment: ${riskLevel} risk for COPD (${riskScore}% probability)`,
+              icon: Activity
+            });
+          } else {
+            updatedFactors[copdIndex] = {
+              ...updatedFactors[copdIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for COPD (${riskScore}% probability)`
+            };
+          }
+          break;
+          
+        case 'liver':
+          const liverIndex = updatedFactors.findIndex(f => f.name === 'Liver Disease Risk');
+          if (liverIndex === -1) {
+            updatedFactors.push({
+              name: 'Liver Disease Risk',
+              level: riskLevel,
+              score: riskScore,
+              description: `AI Assessment: ${riskLevel} risk for liver disease (${riskScore}% probability)`,
+              icon: Activity
+            });
+          } else {
+            updatedFactors[liverIndex] = {
+              ...updatedFactors[liverIndex],
+              score: riskScore,
+              level: riskLevel,
+              description: `AI Assessment: ${riskLevel} risk for liver disease (${riskScore}% probability)`
+            };
+          }
+          break;
+      }
+    });
+    
+    setRiskFactors(updatedFactors);
+  };
+
+  const clearMLResults = async () => {
+    try {
+      await mlService.clearUserPredictions();
+      setMlPredictions([]);
+      
+      // Reset risk factors to default state
+      setRiskFactors([
+        {
+          name: 'Cardiovascular Risk',
+          level: 'moderate',
+          score: 45,
+          description: 'Blood pressure trends show occasional elevations',
+          icon: Heart
+        },
+        {
+          name: 'Kidney Disease',
+          level: 'low',
+          score: 18,
+          description: 'Glucose control stable, minimal risk factors',
+          icon: Activity
+        },
+        {
+          name: 'Retinopathy',
+          level: 'low',
+          score: 22,
+          description: 'Regular screenings show healthy progression',
+          icon: Eye
+        },
+        {
+          name: 'Neuropathy',
+          level: 'moderate',
+          score: 38,
+          description: 'Monitor for symptoms, maintain glucose control',
+          icon: TrendingUp
+        }
+      ]);
+    } catch (error) {
+      console.error('Error clearing ML predictions:', error);
+      // Fallback to local clear if Supabase fails
+      setMlPredictions([]);
+    }
   };
 
   return (
@@ -468,22 +837,53 @@ function RiskAssessment() {
 
       {/* Individual Risk Factors */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <h3 className="text-xl font-bold text-slate-900 mb-6">Individual Risk Factors</h3>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-xl font-bold text-slate-900">Individual Risk Factors</h3>
+          {mlPredictions.length > 0 && (
+            <div className="flex items-center space-x-2 text-sm text-purple-600">
+              <Brain className="w-4 h-4" />
+              <span>Updated with AI Assessment</span>
+            </div>
+          )}
+        </div>
         <div className="space-y-4">
           {riskFactors.map((factor, index) => {
             const colors = getRiskColor(factor.level);
+            const hasMLPrediction = mlPredictions.some(p => 
+              (p.modelType === 'heart' && factor.name === 'Cardiovascular Risk') ||
+              (p.modelType === 'diabetes' && factor.name === 'Diabetes Risk') ||
+              (p.modelType === 'hypertension' && factor.name === 'Hypertension Risk') ||
+              (p.modelType === 'ckd' && factor.name === 'Kidney Disease') ||
+              (p.modelType === 'asthma' && factor.name === 'Asthma Risk') ||
+              (p.modelType === 'arthritis' && factor.name === 'Arthritis Risk') ||
+              (p.modelType === 'copd' && factor.name === 'COPD Risk') ||
+              (p.modelType === 'liver' && factor.name === 'Liver Disease Risk')
+            );
+            
             return (
               <div
                 key={index}
-                className={`${colors.bg} border-2 ${colors.border} rounded-xl p-5 transition-all duration-200 hover:shadow-md`}
+                className={`${colors.bg} border-2 ${colors.border} rounded-xl p-5 transition-all duration-200 hover:shadow-md ${hasMLPrediction ? 'ring-2 ring-purple-200' : ''}`}
               >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center space-x-3">
-                    <div className={`${colors.bg} p-2 rounded-lg`}>
+                    <div className={`${colors.bg} p-2 rounded-lg relative`}>
                       <factor.icon className={`w-5 h-5 ${colors.text}`} />
+                      {hasMLPrediction && (
+                        <div className="absolute -top-1 -right-1 w-3 h-3 bg-purple-500 rounded-full flex items-center justify-center">
+                          <Brain className="w-2 h-2 text-white" />
+                        </div>
+                      )}
                     </div>
                     <div>
-                      <h4 className="font-semibold text-slate-900">{factor.name}</h4>
+                      <h4 className="font-semibold text-slate-900 flex items-center space-x-2">
+                        <span>{factor.name}</span>
+                        {hasMLPrediction && (
+                          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+                            AI Enhanced
+                          </span>
+                        )}
+                      </h4>
                       <p className="text-sm text-slate-600 mt-1">{factor.description}</p>
                     </div>
                   </div>
@@ -500,6 +900,36 @@ function RiskAssessment() {
                     style={{ width: `${factor.score}%` }}
                   />
                 </div>
+                
+                {/* Show ML prediction details if available */}
+                {hasMLPrediction && (
+                  <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <Brain className="w-4 h-4 text-purple-600" />
+                      <span className="text-sm font-medium text-purple-900">AI Assessment Details</span>
+                    </div>
+                    {mlPredictions
+                      .filter(p => 
+                        (p.modelType === 'heart' && factor.name === 'Cardiovascular Risk') ||
+                        (p.modelType === 'diabetes' && factor.name === 'Diabetes Risk') ||
+                        (p.modelType === 'hypertension' && factor.name === 'Hypertension Risk') ||
+                        (p.modelType === 'ckd' && factor.name === 'Kidney Disease') ||
+                        (p.modelType === 'asthma' && factor.name === 'Asthma Risk') ||
+                        (p.modelType === 'arthritis' && factor.name === 'Arthritis Risk') ||
+                        (p.modelType === 'copd' && factor.name === 'COPD Risk') ||
+                        (p.modelType === 'liver' && factor.name === 'Liver Disease Risk')
+                      )
+                      .map((prediction, idx) => (
+                        <div key={idx} className="text-xs text-purple-700">
+                          <div className="flex justify-between">
+                            <span>Prediction: {prediction.prediction === 1 ? 'Positive' : 'Negative'}</span>
+                            <span>Confidence: {(prediction.confidence * 100).toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                )}
               </div>
             );
           })}

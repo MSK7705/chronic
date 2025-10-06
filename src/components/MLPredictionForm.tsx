@@ -191,11 +191,11 @@ function MLPredictionForm({ onPredictionResult }: MLPredictionFormProps) {
                 ) : field.type === 'number' ? (
                   <input
                     type="number"
-                    value={formData[field.key] || ''}
-                    onChange={(e) => handleInputChange(field.key, parseFloat(e.target.value))}
+                    value={formData[field.key] !== undefined ? formData[field.key] : ''}
+                    onChange={(e) => handleInputChange(field.key, e.target.value === '' ? '' : parseFloat(e.target.value))}
                     min={field.min}
                     max={field.max}
-                    step={field.step || 1}
+                    step={(field as any).step || 1}
                     className="w-full px-4 py-3 text-base border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     required
                   />

@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV '/Volumes/Main disk/GIt Hub Repo/Chronic disease management 2/chronic/ML_Models/ml_backend/.venv'
+set -gx VIRTUAL_ENV '/Volumes/Main disk/GIt Hub Repo/chronic/ML_Models/ml_backend/.venv'
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

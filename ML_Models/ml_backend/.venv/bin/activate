@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV='/Volumes/Main disk/GIt Hub Repo/Chronic disease management 2/chronic/ML_Models/ml_backend/.venv'
+VIRTUAL_ENV='/Volumes/Main disk/GIt Hub Repo/chronic/ML_Models/ml_backend/.venv'
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"

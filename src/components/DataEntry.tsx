@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Heart, Droplet, Activity, Thermometer, Weight, Save, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { mlService } from '../services/mlService';
 import ReactSelect from "react-select";
 
 interface DataEntryProps {
@@ -125,6 +126,41 @@ function DataEntry({ onDataSubmit }: DataEntryProps) {
         });
 
       if (error) throw error;
+
+      // Call health prediction model with the saved data
+      try {
+        const glucose = parseFloat(formData.bloodGlucose) || 0;
+        const systolic = parseInt(formData.systolic) || 0;
+        const diastolic = parseInt(formData.diastolic) || 0;
+        const heart_rate = parseInt(formData.heartRate) || 0;
+        const temperature = parseFloat(formData.temperature) || 0;
+        const weight = parseFloat(formData.weight) || 0;
+
+        if (glucose > 0 && systolic > 0 && diastolic > 0 && heart_rate > 0) {
+          const prediction = await mlService.predictHealthOverall({
+            glucose,
+            systolic_bp: systolic,
+            diastolic_bp: diastolic,
+            heart_rate,
+            temperature,
+            weight,
+          });
+
+          // Store prediction in Supabase
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            await supabase.from('health_predictions').insert({
+              user_id: user.id,
+              complication_risk: prediction.complication_risk,
+              emergency_visits: prediction.emergency_visits,
+              adherence_rate: prediction.adherence_rate,
+              recorded_at: new Date().toISOString(),
+            });
+          }
+        }
+      } catch (predictionError) {
+        console.warn('Health prediction failed:', predictionError);
+      }
 
       setShowSuccess(true);
       onDataSubmit();

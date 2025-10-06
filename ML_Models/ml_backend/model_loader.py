@@ -14,9 +14,9 @@ def test_model_loading():
         "hypertension": "../Hypertension ML/xgb_hypertension_model.pkl",
         "ckd": "../Chronic Kidney disease(CKD) ML/xgb_ckd_simple_model.pkl",
         "asthma": "../Asthma ML/xgb_asthma_model.pkl",
-        "arthritis": "../Arthritis_ML/data/xgb_arthritis_highacc.pkl",
+        "arthritis": "../Arthritis_ML/data/data/xgb_arthritis_highacc.pkl",
         "copd": "../COPD_ML/data/xgb_copd_highacc.pkl",
-        "liver": "../Liver_ML/data/xgb_liver.pkl"
+        "liver": "../Liver_ML/data/data/xgb_liver.pkl"
     }
     
     print("🔍 Testing ML Model Loading...")

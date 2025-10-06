@@ -37,7 +37,22 @@ function App() {
       }
     );
 
-    return () => subscription.unsubscribe();
+    // Realtime updates: refresh dashboard when new vital_signs inserted
+    const channel = supabase
+      .channel('realtime:vital_signs')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'vital_signs' },
+        () => {
+          setRefreshTrigger(prev => prev + 1);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleDataUpdate = () => {

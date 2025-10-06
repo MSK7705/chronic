@@ -7,6 +7,10 @@ import numpy as np
 from typing import Dict, Any
 import os
 from pathlib import Path
+from sklearn.preprocessing import StandardScaler
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.ensemble import RandomForestRegressor
+import pandas as pd
 
 app = FastAPI(title="Chronic Disease ML API", version="1.0.0")
 
@@ -51,44 +55,97 @@ MODEL_CONFIGS = {
         "model_file": "xgb_hypertension_model.pkl",
         "scaler_file": "scaler_hypertension.pkl",
         "encoders_file": "encoders_hypertension.pkl",
-        "num_imputer_file": "num_imputer_hypertension.pkl"
+        "num_imputer_file": "num_imputer_hypertension.pkl",
+        "features": ['Systolic_BP', 'Diastolic_BP', 'Heart_Rate', 'BMI', 'Age', 'Gender'],
+        "categorical_cols": ['Gender'],
+        "zero_cols": ['Systolic_BP', 'Diastolic_BP', 'Heart_Rate', 'BMI']
     },
     "ckd": {
         "path": "../Chronic Kidney disease(CKD) ML",
         "model_file": "xgb_ckd_simple_model.pkl",
         "scaler_file": "scaler_ckd_simple.pkl",
         "encoders_file": "encoders_ckd_simple.pkl",
-        "num_imputer_file": "num_imputer_ckd_simple.pkl"
+        "num_imputer_file": "num_imputer_ckd_simple.pkl",
+        "features": ['age', 'bp', 'bgr', 'bu', 'sc', 'hemo', 'htn'],
+        "categorical_cols": ['htn']
     },
     "asthma": {
         "path": "../Asthma ML",
         "model_file": "xgb_asthma_model.pkl",
         "scaler_file": "scaler_asthma.pkl",
         "encoders_file": "encoders_asthma.pkl",
-        "num_imputer_file": "num_imputer_asthma.pkl"
+        "num_imputer_file": "num_imputer_asthma.pkl",
+        "features": ['Age', 'Gender', 'BMI', 'Smoking', 'Wheezing', 'ShortnessOfBreath', 'Coughing', 'ExerciseInduced'],
+        "categorical_cols": ['Gender', 'Smoking', 'Wheezing', 'ShortnessOfBreath', 'Coughing', 'ExerciseInduced']
     },
     "arthritis": {
-        "path": "../Arthritis_ML/data",
+        "path": "../Arthritis_ML/data/data",
         "model_file": "xgb_arthritis_highacc.pkl",
         "scaler_file": "scaler_arthritis_highacc.pkl",
         "encoders_file": "encoders_arthritis_highacc.pkl",
-        "num_imputer_file": "num_imputer_arthritis_highacc.pkl"
+        "num_imputer_file": "num_imputer_arthritis_highacc.pkl",
+        "features": ['Pain_Level', 'Joint_Mobility', 'Stiffness', 'Swelling', 'Age', 'Gender', 'Pain_Stiffness', 'Pain_Swelling', 'Stiffness_Swelling'],
+        "categorical_cols": ['Gender'],
+        "zero_cols": ['Pain_Level', 'Joint_Mobility', 'Stiffness', 'Swelling']
     },
     "copd": {
         "path": "../COPD_ML/data",
         "model_file": "xgb_copd_highacc.pkl",
         "scaler_file": "scaler_copd_highacc.pkl",
         "encoders_file": "encoders_copd_highacc.pkl",
-        "num_imputer_file": "num_imputer_copd_highacc.pkl"
+        "num_imputer_file": "num_imputer_copd_highacc.pkl",
+        "features": ['Age', 'Oxygen_Level', 'Oxygen_Low', 'Cough_SOB', 'Cough_Fatigue', 'Gender', 'Smoking_History', 'Cough', 'Shortness_of_Breath', 'Fatigue'],
+        "categorical_cols": ['Gender', 'Smoking_History', 'Cough', 'Shortness_of_Breath', 'Fatigue']
     },
     "liver": {
-        "path": "../Liver_ML/data",
+        "path": "../Liver_ML/data/data",
         "model_file": "xgb_liver.pkl",
         "scaler_file": "scaler_liver.pkl",
         "encoders_file": "encoders_liver.pkl",
-        "num_imputer_file": "num_imputer_liver.pkl"
+        "num_imputer_file": "num_imputer_liver.pkl",
+        "features": ['Age', 'BMI', 'ALT', 'AST', 'Bilirubin', 'Fatigue', 'Jaundice', 'Nausea', 'Abdominal_Pain'],
+        "categorical_cols": ['Fatigue', 'Jaundice', 'Nausea', 'Abdominal_Pain']
     }
 }
+
+# ---------------- Health Overall Model (Complications/Emergency/Adherence) ----------------
+HEALTH_MODEL = None
+HEALTH_SCALER = None
+
+def train_health_model():
+    global HEALTH_MODEL, HEALTH_SCALER
+    try:
+        data_path = Path(__file__).resolve().parents[2] / "health_data" / "health_risk_data_200.csv"
+        if not data_path.exists():
+            print(f"Health data CSV not found at {data_path}. Skipping health model training.")
+            return
+        df = pd.read_csv(data_path)
+        feature_cols = ['glucose', 'systolic_bp', 'diastolic_bp', 'heart_rate', 'temperature', 'weight']
+        target_cols = ['complication_risk', 'emergency_visits', 'adherence_rate']
+        X = df[feature_cols].values
+        y = df[target_cols].values
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        model = MultiOutputRegressor(RandomForestRegressor(n_estimators=250, random_state=42))
+        model.fit(X_scaled, y)
+        HEALTH_MODEL = model
+        HEALTH_SCALER = scaler
+        print("✅ Health model trained and ready")
+    except Exception as e:
+        print(f"Failed to train health model: {e}")
+
+class HealthPredictionRequest(BaseModel):
+    glucose: float
+    systolic_bp: float
+    diastolic_bp: float
+    heart_rate: float
+    temperature: float
+    weight: float
+
+class HealthPredictionResponse(BaseModel):
+    complication_risk: float
+    emergency_visits: float
+    adherence_rate: float
 
 def load_model_artifacts(model_type: str):
     """Load all model artifacts for a given model type"""
@@ -203,9 +260,7 @@ def make_prediction(model_type: str, features: Dict[str, Any]):
     """Generic prediction function for all models"""
     artifacts = load_model_artifacts(model_type)
     if not artifacts:
-        # Fallback to mock prediction
-        mock_prob = np.random.uniform(0.1, 0.8)
-        return mock_prob, 1 if mock_prob > 0.5 else 0, mock_prob
+        raise ValueError(f"Model artifacts not available for '{model_type}'")
     
     try:
         # Encode categorical features first
@@ -213,14 +268,22 @@ def make_prediction(model_type: str, features: Dict[str, Any]):
         config = MODEL_CONFIGS[model_type]
         
         if model_type == "heart":
-            # Heart disease specific processing
+            # Heart disease specific processing - handle encoders properly
             df = pd.DataFrame([encoded_features])
             
-            # Handle categorical encoding
+            # Apply encoding if available - handle unseen labels gracefully
             if "encoders" in artifacts and "categorical_cols" in config:
                 for col in config["categorical_cols"]:
                     if col in df.columns:
-                        df[col] = artifacts["encoders"][col].transform(df[col])
+                        try:
+                            df[col] = artifacts["encoders"][col].transform(df[col])
+                        except ValueError as e:
+                            if "previously unseen labels" in str(e):
+                                # Handle unseen labels by using the most frequent class
+                                print(f"Warning: Unseen label in {col}, using fallback value")
+                                df[col] = 0  # Use 0 as fallback
+                            else:
+                                raise e
             
             # Impute numerical values
             if "num_imputer" in artifacts:
@@ -263,19 +326,36 @@ def make_prediction(model_type: str, features: Dict[str, Any]):
             
             # Apply imputation if available
             if "num_imputer" in artifacts:
-                df = pd.DataFrame(artifacts["num_imputer"].transform(df), columns=df.columns)
+                zero_cols = config.get("zero_cols", [])
+                available_zero_cols = [col for col in zero_cols if col in df.columns]
+                if available_zero_cols:
+                    df[available_zero_cols] = artifacts["num_imputer"].transform(df[available_zero_cols])
             
-            # Apply encoding if available
+            # Apply encoding if available - handle unseen labels gracefully
             if "encoders" in artifacts:
                 for col, encoder in artifacts["encoders"].items():
                     if col in df.columns:
-                        df[col] = encoder.transform(df[col])
+                        try:
+                            df[col] = encoder.transform(df[col])
+                        except ValueError as e:
+                            if "previously unseen labels" in str(e):
+                                # Handle unseen labels by using the most frequent class
+                                print(f"Warning: Unseen label in {col}, using fallback value")
+                                df[col] = 0  # Use 0 as fallback
+                            else:
+                                raise e
             
-            # Scale features
+            # Create interaction features for arthritis model
+            if model_type == "arthritis":
+                df['Pain_Stiffness'] = df['Pain_Level'] * df['Stiffness']
+                df['Pain_Swelling'] = df['Pain_Level'] * df['Swelling']
+                df['Stiffness_Swelling'] = df['Stiffness'] * df['Swelling']
+            
+            # Scale features - only use the features that were used during training
             if "scaler" in artifacts:
-                scaled_data = artifacts["scaler"].transform(df)
+                scaled_data = artifacts["scaler"].transform(df[config["features"]])
             else:
-                scaled_data = df.values
+                scaled_data = df[config["features"]].values
         
         # Make prediction
         model = artifacts["model"]
@@ -286,9 +366,7 @@ def make_prediction(model_type: str, features: Dict[str, Any]):
     
     except Exception as e:
         print(f"Prediction error for {model_type}: {e}")
-        # Fallback to mock prediction
-        mock_prob = np.random.uniform(0.1, 0.8)
-        return mock_prob, 1 if mock_prob > 0.5 else 0, mock_prob
+        raise
 
 @app.get("/")
 async def root():
@@ -313,6 +391,29 @@ async def predict_disease(model_type: str, request: PredictionRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/predict/health_overall", response_model=HealthPredictionResponse)
+async def predict_health_overall(request: HealthPredictionRequest):
+    if HEALTH_MODEL is None or HEALTH_SCALER is None:
+        raise HTTPException(status_code=503, detail="Health model not available")
+    try:
+        features = [[
+            request.glucose,
+            request.systolic_bp,
+            request.diastolic_bp,
+            request.heart_rate,
+            request.temperature,
+            request.weight,
+        ]]
+        X_scaled = HEALTH_SCALER.transform(features)
+        pred = HEALTH_MODEL.predict(X_scaled)[0]
+        return HealthPredictionResponse(
+            complication_risk=float(max(0, min(100, pred[0]))),
+            emergency_visits=float(max(0, min(100, pred[1]))),
+            adherence_rate=float(max(0, min(100, pred[2])))
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.on_event("startup")
 async def startup_event():
     print("🚀 Starting Chronic Disease ML API...")
@@ -321,6 +422,7 @@ async def startup_event():
         artifacts = load_model_artifacts(model_name)
         status = "✅ Loaded" if artifacts else "❌ Failed"
         print(f"   {model_name}: {status}")
+    train_health_model()
 
 if __name__ == "__main__":
     import uvicorn

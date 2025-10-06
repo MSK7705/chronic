@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { Calendar, Pill, Activity, Utensils, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Calendar, Pill, Activity, Utensils, AlertCircle, CheckCircle2, Clock, Heart, Target, Shield, TrendingUp } from 'lucide-react';
+import { carePlanService } from '../services/carePlanService';
+import { supabase } from '../lib/supabase';
 
 interface Medication {
   name: string;
@@ -18,43 +20,116 @@ interface Recommendation {
 }
 
 function CarePlan() {
-  const [medications, setMedications] = useState<Medication[]>([
-    { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily', time: '8:00 AM', taken: true },
-    { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily', time: '8:00 PM', taken: false },
-    { name: 'Lisinopril', dosage: '10mg', frequency: 'Once daily', time: '8:00 AM', taken: true },
-    { name: 'Atorvastatin', dosage: '20mg', frequency: 'Once daily', time: '9:00 PM', taken: false },
-  ]);
+  const [medications, setMedications] = useState<Medication[]>([]);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [carePlan, setCarePlan] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const [recommendations] = useState<Recommendation[]>([
-    {
-      category: 'Diet',
-      title: 'Reduce carbohydrate intake at dinner',
-      description: 'Your evening glucose readings are elevated. Try reducing carbs by 30% at dinner and monitor for improvement.',
-      priority: 'high',
-      icon: Utensils
-    },
-    {
-      category: 'Exercise',
-      title: 'Add 15-minute post-meal walks',
-      description: 'Walking after meals can help lower blood glucose levels by 20-30%. Start with dinner walks.',
-      priority: 'high',
-      icon: Activity
-    },
-    {
-      category: 'Monitoring',
-      title: 'Check blood pressure twice daily',
-      description: 'Your recent readings show variability. Monitor morning and evening for better tracking.',
-      priority: 'medium',
-      icon: Calendar
-    },
-    {
-      category: 'Medication',
-      title: 'Take evening medications before 9 PM',
-      description: 'Consistency in timing improves medication effectiveness. Set a daily reminder.',
-      priority: 'medium',
-      icon: Pill
-    },
-  ]);
+  useEffect(() => {
+    loadCarePlan();
+  }, []);
+
+  const loadCarePlan = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setError('Please log in to view your care plan');
+        return;
+      }
+
+      // Try to get existing care plan first
+      let plan = await carePlanService.getLatestCarePlan(user.id);
+      
+      // If no plan exists, generate one
+      if (!plan) {
+        // Get user profile for patient name
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+        
+        const patientName = profile?.full_name || 'Patient';
+        plan = await carePlanService.generateCarePlan(user.id, patientName);
+        
+        if (plan) {
+          await carePlanService.storeCarePlan(plan);
+        }
+      }
+
+      if (plan) {
+        setCarePlan(plan);
+        
+        // Convert care plan recommendations to component format
+        const formattedRecommendations = plan.recommendations.map((rec: any) => ({
+          category: rec.type,
+          title: rec.title,
+          description: rec.description,
+          priority: rec.priority,
+          icon: getIconForCategory(rec.type)
+        }));
+        
+        setRecommendations(formattedRecommendations);
+        
+        // Set sample medications based on conditions
+        const sampleMedications = generateSampleMedications(plan.conditions);
+        setMedications(sampleMedications);
+      }
+    } catch (err) {
+      console.error('Error loading care plan:', err);
+      setError('Failed to load care plan. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getIconForCategory = (category: string) => {
+    switch (category.toLowerCase()) {
+      case 'diet':
+      case 'nutrition':
+        return Utensils;
+      case 'exercise':
+      case 'activity':
+        return Activity;
+      case 'medication':
+        return Pill;
+      case 'monitoring':
+        return Heart;
+      case 'lifestyle':
+        return Target;
+      default:
+        return AlertCircle;
+    }
+  };
+
+  const generateSampleMedications = (conditions: string[]) => {
+    const medications: Medication[] = [];
+    
+    if (conditions.includes('diabetes')) {
+      medications.push(
+        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily', time: '8:00 AM', taken: true },
+        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily', time: '8:00 PM', taken: false }
+      );
+    }
+    
+    if (conditions.includes('hypertension')) {
+      medications.push(
+        { name: 'Lisinopril', dosage: '10mg', frequency: 'Once daily', time: '8:00 AM', taken: true }
+      );
+    }
+    
+    if (conditions.includes('heart')) {
+      medications.push(
+        { name: 'Atorvastatin', dosage: '20mg', frequency: 'Once daily', time: '9:00 PM', taken: false }
+      );
+    }
+    
+    return medications;
+  };
 
   const toggleMedication = (index: number) => {
     setMedications(prev => prev.map((med, i) =>
@@ -94,8 +169,69 @@ function CarePlan() {
   const completedMeds = medications.filter(m => m.taken).length;
   const totalMeds = medications.length;
 
+  if (loading) {
+    return (
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+          <div className="flex items-center justify-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <span className="ml-3 text-lg text-slate-600">Loading your personalized care plan...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-6">
+          <div className="flex items-center">
+            <AlertCircle className="w-6 h-6 text-red-600 mr-3" />
+            <div>
+              <h3 className="text-lg font-semibold text-red-800">Error Loading Care Plan</h3>
+              <p className="text-red-600 mt-1">{error}</p>
+              <button 
+                onClick={loadCarePlan}
+                className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {/* Care Plan Header */}
+      {carePlan && (
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl shadow-lg p-6 text-white">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold">Personalized Care Plan</h2>
+              <p className="text-blue-100 mt-1">Generated for {carePlan.patientName}</p>
+              <div className="flex items-center mt-3 space-x-4">
+                <div className="flex items-center">
+                  <Shield className="w-5 h-5 mr-2" />
+                  <span className="text-sm">Risk Level: {carePlan.riskLevel}</span>
+                </div>
+                <div className="flex items-center">
+                  <TrendingUp className="w-5 h-5 mr-2" />
+                  <span className="text-sm">Health Score: {carePlan.overallHealthScore}/100</span>
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-blue-100">Next Review</p>
+              <p className="text-lg font-semibold">{new Date(carePlan.nextReviewDate).toLocaleDateString()}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
