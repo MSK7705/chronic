@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, TrendingUp, Shield, Activity, Heart, Eye, Siren, ChevronDown } from 'lucide-react';
+import { AlertTriangle, TrendingUp, Shield, Activity, Heart, Eye, Siren, ChevronDown, Brain } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { supabase } from '../lib/supabase';
+import MLPredictionForm from './MLPredictionForm';
+import MLPredictionResults from './MLPredictionResults';
+import { MLPredictionResponse } from '../services/mlService';
 
 interface RiskFactor {
   name: string;
@@ -65,6 +68,8 @@ function RiskAssessment() {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [stepsData, setStepsData] = useState<StepsDataPoint[]>([]);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('1week');
+  const [mlPredictions, setMlPredictions] = useState<(MLPredictionResponse & { modelType: string })[]>([]);
+  const [showMLForm, setShowMLForm] = useState(false);
 
   useEffect(() => {
     fetchVitalSignsData();
@@ -323,6 +328,18 @@ function RiskAssessment() {
 
   const overallRisk = getOverallRiskLevel(overallRiskScore);
 
+  const handleMLPrediction = (result: MLPredictionResponse & { modelType: string }) => {
+    setMlPredictions(prev => {
+      const filtered = prev.filter(p => p.modelType !== result.modelType);
+      return [...filtered, result];
+    });
+    setShowMLForm(false);
+  };
+
+  const clearMLResults = () => {
+    setMlPredictions([]);
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Overall Risk Score */}
@@ -390,6 +407,64 @@ function RiskAssessment() {
           </div>
         </div>
       </div>
+
+      {/* AI Risk Assessment Section */}
+      <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl shadow-lg p-8 text-white">
+        <div className="flex items-center justify-center">
+          <div className="text-center">
+            <div className="flex items-center justify-center space-x-3 mb-4">
+              <Brain className="w-8 h-8" />
+              <h2 className="text-2xl font-bold">AI Risk Assessment</h2>
+            </div>
+            <p className="text-lg opacity-90 mb-6">
+              Get personalized predictions using advanced machine learning models
+            </p>
+            {!showMLForm ? (
+              <button
+                onClick={() => setShowMLForm(true)}
+                className="bg-white text-purple-600 px-6 py-3 rounded-lg font-medium hover:bg-purple-50 transition-colors"
+              >
+                Start AI Assessment
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowMLForm(false)}
+                className="bg-white/20 text-white px-4 py-2 rounded-lg font-medium hover:bg-white/30 transition-colors"
+              >
+                ← Back to Overview
+              </button>
+            )}
+          </div>
+
+        </div>
+      </div>
+
+      {/* ML Form and Results */}
+      {showMLForm && (
+        <div className="flex justify-center">
+          <div className="w-full max-w-4xl">
+            <MLPredictionForm onPredictionResult={handleMLPrediction} />
+          </div>
+        </div>
+      )}
+
+      {/* ML Results */}
+      {showMLForm && mlPredictions.length > 0 && (
+        <div className="flex justify-center">
+          <div className="w-full max-w-4xl">
+            <MLPredictionResults results={mlPredictions} onClear={clearMLResults} />
+          </div>
+        </div>
+      )}
+
+      {/* ML Results Only */}
+      {!showMLForm && mlPredictions.length > 0 && (
+        <div className="flex justify-center">
+          <div className="w-full max-w-4xl">
+            <MLPredictionResults results={mlPredictions} onClear={clearMLResults} />
+          </div>
+        </div>
+      )}
 
       {/* Individual Risk Factors */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
