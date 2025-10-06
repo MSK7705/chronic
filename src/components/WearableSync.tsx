@@ -1,309 +1,162 @@
-import { useState } from 'react';
-import { Smartphone, Watch, Bluetooth, Activity, RefreshCw, CheckCircle, Wifi, BatteryCharging } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from "react";
 
-interface Device {
+interface DeviceInfo {
   id: string;
-  name: string;
-  type: string;
-  status: 'connected' | 'disconnected' | 'syncing';
-  battery: number;
-  lastSync: string;
-  icon: any;
-  metrics: string[];
+  name?: string;
+  connected: boolean;
+  supportedServices: string[];
 }
 
-interface WearableSyncProps {
-  onSync: () => void;
-}
+const WearableDashboard: React.FC = () => {
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
+  const [heartRate, setHeartRate] = useState<number | null>(null);
+  const [battery, setBattery] = useState<number | null>(null);
+  const [spo2, setSpo2] = useState<number | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string>("");
+  const [isConnecting, setIsConnecting] = useState(false);
 
-function WearableSync({ onSync }: WearableSyncProps) {
-  const [devices, setDevices] = useState<Device[]>([
-    {
-      id: '1',
-      name: 'Apple Watch Series 9',
-      type: 'Smartwatch',
-      status: 'connected',
-      battery: 87,
-      lastSync: '5 minutes ago',
-      icon: Watch,
-      metrics: ['Heart Rate', 'Activity', 'SpO2', 'Sleep']
-    },
-    {
-      id: '2',
-      name: 'Fitbit Charge 6',
-      type: 'Fitness Tracker',
-      status: 'connected',
-      battery: 62,
-      lastSync: '1 hour ago',
-      icon: Activity,
-      metrics: ['Steps', 'Heart Rate', 'Sleep', 'Stress']
-    },
-    {
-      id: '3',
-      name: 'Continuous Glucose Monitor',
-      type: 'Medical Device',
-      status: 'connected',
-      battery: 45,
-      lastSync: '10 minutes ago',
-      icon: Smartphone,
-      metrics: ['Blood Glucose', 'Trends']
-    }
-  ]);
+  const updateStatus = useCallback((msg: string) => {
+    setStatusMessage(msg);
+  }, []);
 
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
-
-  const handleSync = async (deviceId?: string) => {
-    setIsSyncing(true);
-
-    if (deviceId) {
-      setDevices(prev => prev.map(device =>
-        device.id === deviceId ? { ...device, status: 'syncing' as const } : device
-      ));
-    }
-
-    // Simulate sync delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    if (deviceId) {
-      setDevices(prev => prev.map(device =>
-        device.id === deviceId
-          ? { ...device, status: 'connected' as const, lastSync: 'Just now' }
-          : device
-      ));
-    } else {
-      setDevices(prev => prev.map(device => ({
-        ...device,
-        status: 'connected' as const,
-        lastSync: 'Just now'
-      })));
-    }
-
-    setIsSyncing(false);
-    setLastSyncTime(new Date());
-    onSync();
+  const parseHeartRate = (value: DataView) => {
+    let flags = value.getUint8(0);
+    let rate16Bits = flags & 0x1;
+    return rate16Bits ? value.getUint16(1, true) : value.getUint8(1);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'connected': return {
-        bg: 'bg-emerald-50',
-        border: 'border-emerald-200',
-        dot: 'bg-emerald-500',
-        text: 'text-emerald-700'
-      };
-      case 'syncing': return {
-        bg: 'bg-blue-50',
-        border: 'border-blue-200',
-        dot: 'bg-blue-500',
-        text: 'text-blue-700'
-      };
-      case 'disconnected': return {
-        bg: 'bg-slate-50',
-        border: 'border-slate-200',
-        dot: 'bg-slate-400',
-        text: 'text-slate-600'
-      };
-      default: return {
-        bg: 'bg-slate-50',
-        border: 'border-slate-200',
-        dot: 'bg-slate-400',
-        text: 'text-slate-600'
-      };
-    }
-  };
+  const connectToDevice = useCallback(async (dev: BluetoothDevice) => {
+    try {
+      setIsConnecting(true);
+      updateStatus(`🔄 Connecting to ${dev.name ?? "device"}...`);
 
-  const getBatteryColor = (level: number) => {
-    if (level > 50) return 'text-emerald-600';
-    if (level > 20) return 'text-amber-600';
-    return 'text-rose-600';
+      const server = await dev.gatt?.connect();
+      if (!server) throw new Error("No GATT server found.");
+
+      const services = await server.getPrimaryServices();
+      const supportedServices = services.map((s) => s.uuid);
+
+      setDeviceInfo({
+        id: dev.id,
+        name: dev.name ?? "Unnamed Device",
+        connected: true,
+        supportedServices,
+      });
+
+      // Heart Rate
+      if (supportedServices.includes("0000180d-0000-1000-8000-00805f9b34fb")) {
+        const hrService = await server.getPrimaryService("heart_rate");
+        const hrChar = await hrService.getCharacteristic("heart_rate_measurement");
+        await hrChar.startNotifications();
+        hrChar.addEventListener("characteristicvaluechanged", (e: any) => {
+          const val = parseHeartRate(e.target.value);
+          setHeartRate(val);
+        });
+      }
+
+      // Battery
+      if (supportedServices.includes("0000180f-0000-1000-8000-00805f9b34fb")) {
+        const batService = await server.getPrimaryService("battery_service");
+        const batChar = await batService.getCharacteristic("battery_level");
+        const batVal = await batChar.readValue();
+        setBattery(batVal.getUint8(0));
+      }
+
+      // SpO₂ (if available)
+      if (supportedServices.includes("00001822-0000-1000-8000-00805f9b34fb")) {
+        const plxService = await server.getPrimaryService("pulse_oximeter");
+        const plxChar = await plxService.getCharacteristic(0x2a5f);
+        await plxChar.startNotifications();
+        plxChar.addEventListener("characteristicvaluechanged", (e: any) => {
+          const data = e.target.value;
+          const spo2Value = data.getUint8(1);
+          setSpo2(spo2Value);
+        });
+      }
+
+      updateStatus(`✅ Connected to ${dev.name}`);
+    } catch (err) {
+      updateStatus(`❌ Connection failed: ${(err as Error).message}`);
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [updateStatus]);
+
+  const handlePairDevice = async () => {
+    try {
+      const dev = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [
+          "heart_rate",
+          "battery_service",
+          "pulse_oximeter",
+          "device_information",
+        ],
+      });
+      await connectToDevice(dev);
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("cancelled")) updateStatus("🔕 Pairing cancelled by user");
+      else updateStatus(`⚠️ Error: ${msg}`);
+    }
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Sync Header */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">Connected Devices</h2>
-            <p className="text-slate-600 mt-1">Manage your wearable devices and health trackers</p>
-            {lastSyncTime && (
-              <p className="text-sm text-emerald-600 mt-2 flex items-center space-x-2">
-                <CheckCircle className="w-4 h-4" />
-                <span>Last synced: {lastSyncTime.toLocaleTimeString()}</span>
-              </p>
+    <div className="p-6 space-y-6">
+      <h2 className="text-2xl font-bold">🩺 Wearable Health Dashboard</h2>
+
+      <div className="flex items-center space-x-4">
+        <button
+          onClick={handlePairDevice}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg"
+          disabled={isConnecting}
+        >
+          {isConnecting ? "Connecting..." : "🔍 Scan Devices"}
+        </button>
+        <span className="text-gray-700">{statusMessage}</span>
+      </div>
+
+      {deviceInfo && (
+        <div className="p-4 bg-gray-100 rounded-lg shadow">
+          <h3 className="font-semibold text-lg">📱 {deviceInfo.name}</h3>
+          <p className="text-sm mt-1">
+            Status:{" "}
+            {deviceInfo.connected ? (
+              <span className="text-green-600">🟢 Connected</span>
+            ) : (
+              <span className="text-red-600">🔴 Disconnected</span>
             )}
-          </div>
-          <button
-            onClick={() => handleSync()}
-            disabled={isSyncing}
-            className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-lg font-semibold hover:from-emerald-600 hover:to-teal-700 shadow-lg hover:shadow-xl transition-all duration-200 flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <RefreshCw className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? 'Syncing...' : 'Sync All'}</span>
-          </button>
-        </div>
-      </div>
+          </p>
 
-      {/* Connected Devices */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {devices.map((device) => {
-          const colors = getStatusColor(device.status);
-          return (
-            <div
-              key={device.id}
-              className={`${colors.bg} border-2 ${colors.border} rounded-2xl p-6 transition-all duration-200 hover:shadow-lg`}
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-start space-x-4">
-                  <div className={`${colors.bg} p-3 rounded-xl border-2 ${colors.border}`}>
-                    <device.icon className={`w-8 h-8 ${colors.text}`} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900">{device.name}</h3>
-                    <p className="text-sm text-slate-600 mt-0.5">{device.type}</p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className={`w-2 h-2 rounded-full ${colors.dot} ${device.status === 'syncing' ? 'animate-pulse' : ''}`} />
-                  <span className={`text-xs font-medium ${colors.text} capitalize`}>{device.status}</span>
-                </div>
-              </div>
-
-              {/* Device Stats */}
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div className="bg-white rounded-lg p-3 border border-slate-200">
-                  <div className="flex items-center space-x-2 mb-1">
-                    <BatteryCharging className={`w-4 h-4 ${getBatteryColor(device.battery)}`} />
-                    <span className="text-xs font-medium text-slate-600">Battery</span>
-                  </div>
-                  <span className={`text-lg font-bold ${getBatteryColor(device.battery)}`}>{device.battery}%</span>
-                </div>
-
-                <div className="bg-white rounded-lg p-3 border border-slate-200">
-                  <div className="flex items-center space-x-2 mb-1">
-                    <Wifi className="w-4 h-4 text-blue-600" />
-                    <span className="text-xs font-medium text-slate-600">Last Sync</span>
-                  </div>
-                  <span className="text-sm font-semibold text-slate-900">{device.lastSync}</span>
-                </div>
-              </div>
-
-              {/* Tracked Metrics */}
-              <div className="mb-4">
-                <p className="text-xs font-medium text-slate-600 mb-2">TRACKED METRICS</p>
-                <div className="flex flex-wrap gap-2">
-                  {device.metrics.map((metric, idx) => (
-                    <span
-                      key={idx}
-                      className="px-3 py-1 bg-white rounded-full text-xs font-medium text-slate-700 border border-slate-200"
-                    >
-                      {metric}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex items-center space-x-3 pt-4 border-t border-slate-200">
-                <button
-                  onClick={() => handleSync(device.id)}
-                  disabled={device.status === 'syncing'}
-                  className={`flex-1 px-4 py-2 ${colors.text} font-medium text-sm rounded-lg hover:bg-white transition-colors duration-200 border-2 ${colors.border} disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  {device.status === 'syncing' ? 'Syncing...' : 'Sync Now'}
-                </button>
-                <button className="px-4 py-2 text-slate-600 font-medium text-sm rounded-lg hover:bg-white transition-colors duration-200 border-2 border-slate-200">
-                  Settings
-                </button>
-              </div>
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div className="p-3 bg-white rounded-lg shadow-sm">
+              <p className="text-gray-600 text-sm">❤️ Heart Rate</p>
+              <p className="text-xl font-semibold">{heartRate ?? "—"} bpm</p>
             </div>
-          );
-        })}
-      </div>
 
-      {/* Add New Device */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="bg-blue-100 p-3 rounded-xl">
-              <Bluetooth className="w-6 h-6 text-blue-600" />
+            <div className="p-3 bg-white rounded-lg shadow-sm">
+              <p className="text-gray-600 text-sm">🔋 Battery</p>
+              <p className="text-xl font-semibold">{battery ?? "—"}%</p>
             </div>
-            <div>
-              <h3 className="font-semibold text-slate-900">Add New Device</h3>
-              <p className="text-sm text-slate-600 mt-0.5">Connect additional wearables and health trackers</p>
-            </div>
-          </div>
-          <button className="px-6 py-2.5 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 transition-colors duration-200">
-            Scan Devices
-          </button>
-        </div>
-      </div>
 
-      {/* Sync Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-600">Total Syncs Today</p>
-              <p className="text-3xl font-bold text-slate-900 mt-2">24</p>
+            <div className="p-3 bg-white rounded-lg shadow-sm">
+              <p className="text-gray-600 text-sm">🫁 SpO₂</p>
+              <p className="text-xl font-semibold">{spo2 ?? "—"}%</p>
             </div>
-            <div className="bg-emerald-100 p-3 rounded-xl">
-              <RefreshCw className="w-6 h-6 text-emerald-600" />
+
+            <div className="p-3 bg-white rounded-lg shadow-sm col-span-2">
+              <p className="text-gray-600 text-sm">Supported Services</p>
+              <ul className="list-disc ml-5 text-sm mt-1 text-gray-700">
+                {deviceInfo.supportedServices.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
             </div>
           </div>
         </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-600">Data Points Collected</p>
-              <p className="text-3xl font-bold text-slate-900 mt-2">1,847</p>
-            </div>
-            <div className="bg-blue-100 p-3 rounded-xl">
-              <Activity className="w-6 h-6 text-blue-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-600">Connected Devices</p>
-              <p className="text-3xl font-bold text-slate-900 mt-2">{devices.length}</p>
-            </div>
-            <div className="bg-purple-100 p-3 rounded-xl">
-              <Smartphone className="w-6 h-6 text-purple-600" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Recent Activity Feed */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-        <h3 className="text-lg font-bold text-slate-900 mb-4">Recent Device Activity</h3>
-        <div className="space-y-3">
-          {[
-            { device: 'Apple Watch', action: 'Synced heart rate data', time: '5 min ago', icon: Watch },
-            { device: 'CGM', action: 'Updated glucose readings', time: '10 min ago', icon: Smartphone },
-            { device: 'Fitbit', action: 'Uploaded activity data', time: '1 hour ago', icon: Activity },
-            { device: 'Apple Watch', action: 'Sleep data synced', time: '2 hours ago', icon: Watch },
-          ].map((activity, idx) => (
-            <div key={idx} className="flex items-center space-x-4 p-3 rounded-lg hover:bg-slate-50 transition-colors duration-200">
-              <div className="bg-slate-100 p-2 rounded-lg">
-                <activity.icon className="w-5 h-5 text-slate-600" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-slate-900">{activity.device}</p>
-                <p className="text-xs text-slate-600">{activity.action}</p>
-              </div>
-              <span className="text-xs text-slate-500">{activity.time}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      )}
     </div>
   );
-}
+};
 
-export default WearableSync;
+export default WearableDashboard;

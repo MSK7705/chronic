@@ -1,0 +1,4 @@
+Pain_Level,Joint_Mobility,Stiffness,Swelling,Age,Gender,Pain_Stiffness,Pain_Swelling,Stiffness_Swelling,Arthritis
+9.0,65.0,0.0,0.0,33.0,1,0,0,0,1
+2.0,90.0,9.0,9.0,33.0,0,18,18,81,1
+9.0,90.0,9.0,9.0,33.0,1,81,81,81,1
