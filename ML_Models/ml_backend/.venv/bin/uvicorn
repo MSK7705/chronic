@@ -1,5 +1,5 @@
 #!/bin/sh
-'''exec' "/Volumes/Main disk/GIt Hub Repo/chronic/ML_Models/ml_backend/.venv/bin/python3.11" "$0" "$@"
+'''exec' "/Volumes/Main disk/GIt Hub Repo/chronic/ML_Models/ml_backend/.venv/bin/python" "$0" "$@"
 ' '''
 import sys
 from uvicorn.main import main

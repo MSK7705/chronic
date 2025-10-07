@@ -13,7 +13,7 @@ interface MLPredictionResponse {
 }
 
 class MLService {
-  private baseUrl = 'http://localhost:8000';
+  private baseUrl = 'http://localhost:8001';
 
   async predictRisk(request: MLPredictionRequest): Promise<MLPredictionResponse> {
     try {
