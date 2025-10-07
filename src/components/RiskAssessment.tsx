@@ -49,7 +49,8 @@ type TimePeriod = '1day' | '1week' | '1month';
 function RiskAssessment() {
 
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
-  const [stepsData, setStepsData] = useState<StepsDataPoint[]>([]);
+  // Removed Weekly Steps state to fully remove chart and data handling
+  // const [stepsData, setStepsData] = useState<StepsDataPoint[]>([]);
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('1week');
   const [mlPredictions, setMlPredictions] = useState<(MLPredictionResponse & { modelType: string })[]>([]);
   const [showMLForm, setShowMLForm] = useState(false);
@@ -262,7 +263,7 @@ function RiskAssessment() {
         console.error('Error fetching vital signs:', error);
         // Use mock data if no data available
         setChartData(generateMockData());
-        setStepsData(generateMockStepsData());
+        // setStepsData(generateMockStepsData());
         return;
       }
 
@@ -299,18 +300,17 @@ function RiskAssessment() {
           };
         });
         setChartData(formattedData);
-
         // Generate mock steps data since it's not in our current schema
-        setStepsData(generateMockStepsData());
+        // setStepsData(generateMockStepsData());
       } else {
         // Use mock data if no real data available
         setChartData(generateMockData());
-        setStepsData(generateMockStepsData());
+        // setStepsData(generateMockStepsData());
       }
     } catch (error) {
       console.error('Error:', error);
       setChartData(generateMockData());
-      setStepsData(generateMockStepsData());
+      // setStepsData(generateMockStepsData());
     }
   };
 
@@ -403,60 +403,62 @@ function RiskAssessment() {
     return data;
   };
 
+  /*
   const generateMockStepsData = (): StepsDataPoint[] => {
-    const data: StepsDataPoint[] = [];
-    const now = new Date();
+  const data: StepsDataPoint[] = [];
+  const now = new Date();
 
-    switch (timePeriod) {
-      case '1day':
-        // Generate hourly data for 1 day
-        for (let i = 0; i < 24; i++) {
-          const hour = new Date(now);
-          hour.setHours(i, 0, 0, 0);
-          const timeLabel = hour.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          
-          data.push({
-            day: timeLabel,
-            time: timeLabel,
-            steps: Math.floor(Math.random() * 500) + 100, // 100-600 steps per hour
-          });
-        }
-        break;
+  switch (timePeriod) {
+    case '1day':
+      // Generate hourly data for 1 day
+      for (let i = 0; i < 24; i++) {
+        const hour = new Date(now);
+        hour.setHours(i, 0, 0, 0);
+        const timeLabel = hour.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        data.push({
+          day: timeLabel,
+          time: timeLabel,
+          steps: Math.floor(Math.random() * 500) + 100, // 100-600 steps per hour
+        });
+      }
+      break;
 
-      case '1week':
-        // Generate daily data for 1 week
-        const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        for (let i = 6; i >= 0; i--) {
-          const day = new Date(now);
-          day.setDate(now.getDate() - i);
-          const dayLabel = daysOfWeek[day.getDay()];
-          
-          data.push({
-            day: dayLabel,
-            time: '',
-            steps: Math.floor(Math.random() * 5000) + 3000, // 3000-8000 steps per day
-          });
-        }
-        break;
+    case '1week':
+      // Generate daily data for 1 week
+      const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      for (let i = 6; i >= 0; i--) {
+        const day = new Date(now);
+        day.setDate(now.getDate() - i);
+        const dayLabel = daysOfWeek[day.getDay()];
+        
+        data.push({
+          day: dayLabel,
+          time: '',
+          steps: Math.floor(Math.random() * 5000) + 3000, // 3000-8000 steps per day
+        });
+      }
+      break;
 
-      case '1month':
-        // Generate daily data for 1 month
-        for (let i = 29; i >= 0; i--) {
-          const day = new Date(now);
-          day.setDate(now.getDate() - i);
-          const dateLabel = day.toLocaleDateString([], { month: 'short', day: 'numeric' });
-          
-          data.push({
-            day: dateLabel,
-            time: '',
-            steps: Math.floor(Math.random() * 5000) + 3000, // 3000-8000 steps per day
-          });
-        }
-        break;
-    }
+    case '1month':
+      // Generate daily data for 1 month
+      for (let i = 29; i >= 0; i--) {
+        const day = new Date(now);
+        day.setDate(now.getDate() - i);
+        const dateLabel = day.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        
+        data.push({
+          day: dateLabel,
+          time: '',
+          steps: Math.floor(Math.random() * 5000) + 3000, // 3000-8000 steps per day
+        });
+      }
+      break;
+  }
 
-    return data;
+  return data;
   };
+  */
 
 
   const getRiskColor = (level: string) => {
@@ -492,6 +494,13 @@ function RiskAssessment() {
     if (score < 30) return { level: 'Low Risk', color: 'emerald', icon: Shield };
     if (score < 60) return { level: 'Moderate Risk', color: 'amber', icon: AlertTriangle };
     return { level: 'High Risk', color: 'rose', icon: Siren };
+  };
+
+  // Stable gradient mapping to avoid dynamic Tailwind class injection issues
+  const gradientMap: Record<string, string> = {
+    emerald: 'bg-gradient-to-br from-emerald-500 to-emerald-600',
+    amber: 'bg-gradient-to-br from-amber-500 to-amber-600',
+    rose: 'bg-gradient-to-br from-rose-500 to-rose-600',
   };
 
   const overallRisk = getOverallRiskLevel(overallRiskScore);
@@ -712,7 +721,7 @@ function RiskAssessment() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Overall Risk Score */}
-      <div className={`bg-gradient-to-br from-${overallRisk.color}-500 to-${overallRisk.color}-600 rounded-2xl shadow-lg p-8 text-white`}>
+      <div className={`${gradientMap[overallRisk.color]} rounded-2xl shadow-lg p-8 text-white`}>
         <div className="flex items-start justify-between">
           <div className="flex-1">
             <div className="flex items-center space-x-3 mb-4">
@@ -1129,26 +1138,8 @@ function RiskAssessment() {
           </div>
         </div>
 
-        {/* Third Row - Steps Bar Chart (Full Width) */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h4 className="text-lg font-bold text-slate-900 mb-4">Weekly Steps</h4>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stepsData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="day" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar 
-                  dataKey="steps" 
-                  fill="#3b82f6" 
-                  name="Steps"
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        {/* Weekly Steps chart removed per user request */}
+        {/* Steps chart and related code removed intentionally */}
       </div>
     </div>
   );

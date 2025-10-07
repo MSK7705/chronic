@@ -376,7 +376,7 @@ async def root():
 async def get_available_models():
     return {"models": list(MODEL_CONFIGS.keys())}
 
-@app.post("/predict/{model_type}", response_model=PredictionResponse)
+@app.post("/predict/disease/{model_type}", response_model=PredictionResponse)
 async def predict_disease(model_type: str, request: PredictionRequest):
     if model_type not in MODEL_CONFIGS:
         raise HTTPException(status_code=404, detail=f"Model {model_type} not found")

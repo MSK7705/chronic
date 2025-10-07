@@ -68,17 +68,79 @@ class CarePlanService {
   private cachedCarePlan: CarePlan | null = null;
   private cacheTimestamp: number = 0;
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+  // Cache table existence checks to reduce repeated 404/PGRST205 noise
+  private tableExistenceCache: Record<string, { exists: boolean; timestamp: number }> = {};
+
+  private async checkTableExists(table: string): Promise<boolean> {
+    const now = Date.now();
+    const cached = this.tableExistenceCache[table];
+    if (cached && now - cached.timestamp < this.CACHE_DURATION) {
+      return cached.exists;
+    }
+    try {
+      const { error } = await supabase.from(table).select('id').limit(1);
+      if (error) {
+        const code = (error as any)?.code || '';
+        const msg = ((error as any)?.message || '').toLowerCase();
+        if (code === 'PGRST205' || msg.includes('schema cache') || msg.includes('relation') || msg.includes('could not find the table')) {
+          this.tableExistenceCache[table] = { exists: false, timestamp: now };
+          console.warn(`[carePlanService] Table '${table}' missing or not in schema cache; skipping queries.`);
+          return false;
+        }
+      }
+      this.tableExistenceCache[table] = { exists: true, timestamp: now };
+      return true;
+    } catch (e) {
+      console.warn(`[carePlanService] Error checking table existence for '${table}':`, e);
+      this.tableExistenceCache[table] = { exists: false, timestamp: now };
+      return false;
+    }
+  }
+
+  private async checkCarePlansTable(): Promise<boolean> {
+    try {
+      const { error } = await supabase.from('care_plans').select('id').limit(1);
+      if (error) {
+        const msg = (error as any)?.message?.toLowerCase() || '';
+        const code = (error as any)?.code || '';
+        if (
+          code === 'PGRST205' ||
+          msg.includes('schema cache') ||
+          msg.includes('relation') ||
+          msg.includes("could not find the table")
+        ) {
+          console.warn('[carePlanService] care_plans table not found. Please run create_care_plans_table.sql in your Supabase project.');
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      console.warn('[carePlanService] Error checking care_plans table existence:', e);
+      return false;
+    }
+  }
+
   // Analyze health data to determine conditions and risk factors
   async analyzeHealthData(userId: string): Promise<HealthDataAnalysis> {
     try {
-      // Get latest health score
-      const { data: healthScore } = await supabase
-        .from('health_score')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+      // Get latest health score (guarded)
+      let healthScore: any = null;
+      if (await this.checkTableExists('health_score')) {
+        const { data: hsData, error: hsErr } = await supabase
+          .from('health_score')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(1);
+        if (hsErr) {
+          console.warn('[carePlanService] Error fetching health_score (continuing without it):', hsErr);
+        } else {
+          healthScore = hsData && hsData.length > 0 ? hsData[0] : null;
+        }
+      } else {
+        console.warn('[carePlanService] health_score table missing; continuing analysis without health score');
+      }
 
       // Get recent vital signs
       const { data: vitalSigns } = await supabase
@@ -88,13 +150,23 @@ class CarePlanService {
         .order('created_at', { ascending: false })
         .limit(10);
 
-      // Get wearable data for trends
-      const { data: wearableData } = await supabase
-        .from('wearable_data')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(30);
+      // Get wearable data for trends (guarded)
+      let wearableData: any[] = [];
+      if (await this.checkTableExists('wearable_data')) {
+        const { data: wdData, error: wdErr } = await supabase
+          .from('wearable_data')
+          .select('*')
+          .eq('user_id', userId)
+          .order('recorded_at', { ascending: false })
+          .limit(30);
+        if (wdErr) {
+          console.warn('[carePlanService] Error fetching wearable_data (continuing without it):', wdErr);
+        } else {
+          wearableData = wdData || [];
+        }
+      } else {
+        console.warn('[carePlanService] wearable_data table missing; continuing analysis without wearable data');
+      }
 
       const analysis: HealthDataAnalysis = {
         conditions: [],
@@ -110,191 +182,189 @@ class CarePlanService {
       // Analyze conditions based on health data
       if (vitalSigns && vitalSigns.length > 0) {
         const latest = vitalSigns[0];
-        analysis.vitalSigns = {
-          bloodPressure: latest.blood_pressure ? {
-            systolic: latest.blood_pressure.systolic,
-            diastolic: latest.blood_pressure.diastolic
-          } : undefined,
-          heartRate: latest.heart_rate,
-          glucose: latest.glucose,
-          weight: latest.weight,
-          bmi: latest.bmi
-        };
-
-        // Determine conditions based on vital signs
-        if (latest.glucose && latest.glucose > 126) {
-          analysis.conditions.push('Type 2 Diabetes');
-        } else if (latest.glucose && latest.glucose > 100) {
-          analysis.conditions.push('Prediabetes');
-        }
-
-        if (latest.blood_pressure) {
-          const { systolic, diastolic } = latest.blood_pressure;
-          if (systolic >= 140 || diastolic >= 90) {
-            analysis.conditions.push('Hypertension');
-          } else if (systolic >= 130 || diastolic >= 80) {
-            analysis.conditions.push('Elevated Blood Pressure');
+        if (latest.systolic_bp && latest.diastolic_bp) {
+          if (latest.systolic_bp >= 140 || latest.diastolic_bp >= 90) {
+            analysis.conditions.push('hypertension');
+            analysis.riskFactors.push('High blood pressure');
+          } else if (latest.systolic_bp >= 130 || latest.diastolic_bp >= 80) {
+            analysis.conditions.push('elevated-bp');
+            analysis.riskFactors.push('Elevated blood pressure');
           }
         }
 
-        if (latest.bmi && latest.bmi >= 30) {
-          analysis.conditions.push('Obesity');
-        } else if (latest.bmi && latest.bmi >= 25) {
-          analysis.conditions.push('Overweight');
-        }
-      }
-
-      // Analyze trends if we have historical data
-      if (vitalSigns && vitalSigns.length >= 3) {
-        const recent = vitalSigns.slice(0, 3);
-        const older = vitalSigns.slice(3, 6);
-
-        if (recent.length >= 2 && older.length >= 2) {
-          const recentAvgGlucose = recent.reduce((sum, v) => sum + (v.glucose || 0), 0) / recent.length;
-          const olderAvgGlucose = older.reduce((sum, v) => sum + (v.glucose || 0), 0) / older.length;
-
-          if (recentAvgGlucose < olderAvgGlucose - 10) {
-            analysis.trends.improving.push('Blood Glucose');
-          } else if (recentAvgGlucose > olderAvgGlucose + 10) {
-            analysis.trends.worsening.push('Blood Glucose');
-          } else {
-            analysis.trends.stable.push('Blood Glucose');
+        if (latest.glucose) {
+          if (latest.glucose >= 126) {
+            analysis.conditions.push('diabetes');
+            analysis.riskFactors.push('High glucose');
+          } else if (latest.glucose >= 100) {
+            analysis.conditions.push('prediabetes');
+            analysis.riskFactors.push('Elevated glucose');
           }
         }
+
+        if (latest.weight) {
+          const heightMeters = 1.75; // assumed height for demo
+          const bmi = latest.weight / (heightMeters * heightMeters);
+          analysis.vitalSigns.bmi = parseFloat(bmi.toFixed(1));
+          if (bmi >= 30) {
+            analysis.conditions.push('obesity');
+            analysis.riskFactors.push('High BMI');
+          } else if (bmi >= 25) {
+            analysis.conditions.push('overweight');
+            analysis.riskFactors.push('Elevated BMI');
+          }
+        }
+
+        if (latest.heart_rate) {
+          analysis.vitalSigns.heartRate = latest.heart_rate;
+          if (latest.heart_rate >= 100) {
+            analysis.riskFactors.push('Tachycardia');
+          } else if (latest.heart_rate <= 60) {
+            analysis.riskFactors.push('Bradycardia');
+          }
+        }
+
+        if (latest.glucose) {
+          analysis.vitalSigns.glucose = latest.glucose;
+        }
+
+        if (latest.weight) {
+          analysis.vitalSigns.weight = latest.weight;
+        }
+
+        if (latest.systolic_bp && latest.diastolic_bp) {
+          analysis.vitalSigns.bloodPressure = { systolic: latest.systolic_bp, diastolic: latest.diastolic_bp };
+        }
       }
 
-      // Determine risk factors
-      if (analysis.complicationRisk > 0.7) {
-        analysis.riskFactors.push('High Complication Risk');
-      }
-      if (analysis.adherenceRate < 0.8) {
-        analysis.riskFactors.push('Poor Medication Adherence');
-      }
-      if (analysis.emergencyVisits > 2) {
-        analysis.riskFactors.push('Frequent Emergency Visits');
+      // Trends from wearable data
+      if (wearableData && wearableData.length > 0) {
+        const recent = wearableData.slice(0, 5);
+        const avgSteps = recent.reduce((sum, d) => sum + (d.steps || 0), 0) / recent.length;
+        const avgHR = recent.reduce((sum, d) => sum + (d.heart_rate || 0), 0) / recent.length;
+        if (avgSteps > 8000) analysis.trends.improving.push('Activity levels improving');
+        else if (avgSteps < 4000) analysis.trends.worsening.push('Low activity levels');
+        else analysis.trends.stable.push('Stable activity');
+
+        if (avgHR > 100) analysis.riskFactors.push('Consistently high heart rate');
+        else if (avgHR < 60) analysis.riskFactors.push('Consistently low heart rate');
       }
 
       return analysis;
     } catch (error) {
       console.error('Error analyzing health data:', error);
-      throw error;
+      // Return a minimal analysis to keep UI functional
+      return {
+        conditions: [],
+        riskFactors: [],
+        healthScore: 0,
+        complicationRisk: 0,
+        emergencyVisits: 0,
+        adherenceRate: 0,
+        vitalSigns: {},
+        trends: { improving: [], stable: [], worsening: [] }
+      };
     }
   }
 
-  // Generate care plan based on health analysis
   async generateCarePlan(userId: string, patientName: string): Promise<CarePlan> {
     const analysis = await this.analyzeHealthData(userId);
-    
+    const riskLevel = this.determineRiskLevel(analysis);
+
     const carePlan: CarePlan = {
-      id: `cp_${Date.now()}`,
+      id: crypto.randomUUID(),
       userId,
       patientName,
       conditions: analysis.conditions,
-      riskLevel: this.determineRiskLevel(analysis),
+      riskLevel,
       overallHealthScore: analysis.healthScore,
       goals: this.generateGoals(analysis),
       recommendations: this.generateRecommendations(analysis),
       emergencyPlan: this.generateEmergencyPlan(analysis),
-      nextReviewDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+      nextReviewDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
-    // Store care plan in database
-    await this.storeCarePlan(carePlan);
-    
     return carePlan;
   }
 
   private determineRiskLevel(analysis: HealthDataAnalysis): 'low' | 'moderate' | 'high' | 'very-high' {
-    let riskScore = 0;
-    
-    // Risk factors scoring
-    if (analysis.conditions.includes('Type 2 Diabetes')) riskScore += 3;
-    if (analysis.conditions.includes('Hypertension')) riskScore += 2;
-    if (analysis.conditions.includes('Obesity')) riskScore += 2;
-    if (analysis.complicationRisk > 0.8) riskScore += 3;
-    if (analysis.emergencyVisits > 3) riskScore += 2;
-    if (analysis.adherenceRate < 0.6) riskScore += 2;
-    
-    if (riskScore >= 8) return 'very-high';
-    if (riskScore >= 5) return 'high';
-    if (riskScore >= 2) return 'moderate';
-    return 'low';
+    const score = analysis.healthScore;
+    const risk = analysis.complicationRisk;
+    if (score >= 80 && risk <= 20) return 'low';
+    if (score >= 60 && risk <= 40) return 'moderate';
+    if (score >= 40 && risk <= 60) return 'high';
+    return 'very-high';
   }
 
   private generateGoals(analysis: HealthDataAnalysis): CarePlanGoal[] {
     const goals: CarePlanGoal[] = [];
 
-    // Diabetes management goals
-    if (analysis.conditions.includes('Type 2 Diabetes') || analysis.conditions.includes('Prediabetes')) {
+    // Medication adherence
+    goals.push({
+      id: crypto.randomUUID(),
+      category: 'medication',
+      title: 'Maintain medication schedule',
+      description: 'Take prescribed medications as directed by your physician.',
+      target: `${Math.max(80, Math.round(analysis.adherenceRate))}% adherence`,
+      timeframe: 'Daily',
+      priority: 'high',
+      status: 'active',
+      progress: Math.round(analysis.adherenceRate)
+    });
+
+    // Lifestyle
+    goals.push({
+      id: crypto.randomUUID(),
+      category: 'lifestyle',
+      title: 'Increase daily steps',
+      description: 'Aim to walk more and increase physical activity.',
+      target: '8000 steps/day',
+      timeframe: 'Weekly',
+      priority: 'medium',
+      status: 'active',
+      progress: 0
+    });
+
+    // Monitoring
+    goals.push({
+      id: crypto.randomUUID(),
+      category: 'monitoring',
+      title: 'Monitor blood pressure',
+      description: 'Check blood pressure regularly and record readings.',
+      target: '120/80 mmHg',
+      timeframe: 'Weekly',
+      priority: 'high',
+      status: 'active',
+      progress: 0
+    });
+
+    // Education
+    goals.push({
+      id: crypto.randomUUID(),
+      category: 'education',
+      title: 'Learn about diabetes management',
+      description: 'Understand how to manage diabetes through diet and medication.',
+      target: 'Complete 3 education modules',
+      timeframe: 'Monthly',
+      priority: 'medium',
+      status: 'active',
+      progress: 0
+    });
+
+    // Emergency plan link
+    if (analysis.riskFactors.includes('High blood pressure') || analysis.conditions.includes('hypertension')) {
       goals.push({
-        id: `goal_glucose_${Date.now()}`,
-        category: 'monitoring',
-        title: 'Blood Glucose Control',
-        description: 'Maintain blood glucose levels within target range',
-        target: analysis.conditions.includes('Type 2 Diabetes') ? 'HbA1c < 7%' : 'Fasting glucose < 100 mg/dL',
-        timeframe: '3 months',
+        id: crypto.randomUUID(),
+        category: 'emergency',
+        title: 'Recognize hypertension warning signs',
+        description: 'Learn warning signs and actions to take during hypertensive crises.',
+        target: 'Understand and follow emergency plan steps',
+        timeframe: 'Monthly',
         priority: 'high',
         status: 'active',
         progress: 0
-      });
-
-      goals.push({
-        id: `goal_diet_${Date.now()}`,
-        category: 'lifestyle',
-        title: 'Dietary Management',
-        description: 'Follow diabetes-friendly meal plan',
-        target: 'Consistent carbohydrate intake, 3 balanced meals daily',
-        timeframe: 'Ongoing',
-        priority: 'high',
-        status: 'active',
-        progress: 0
-      });
-    }
-
-    // Hypertension management goals
-    if (analysis.conditions.includes('Hypertension') || analysis.conditions.includes('Elevated Blood Pressure')) {
-      goals.push({
-        id: `goal_bp_${Date.now()}`,
-        category: 'monitoring',
-        title: 'Blood Pressure Control',
-        description: 'Maintain blood pressure within target range',
-        target: 'BP < 130/80 mmHg',
-        timeframe: '2 months',
-        priority: 'high',
-        status: 'active',
-        progress: 0
-      });
-    }
-
-    // Weight management goals
-    if (analysis.conditions.includes('Obesity') || analysis.conditions.includes('Overweight')) {
-      goals.push({
-        id: `goal_weight_${Date.now()}`,
-        category: 'lifestyle',
-        title: 'Weight Management',
-        description: 'Achieve and maintain healthy weight',
-        target: analysis.conditions.includes('Obesity') ? 'Lose 5-10% of body weight' : 'Maintain current weight',
-        timeframe: '6 months',
-        priority: 'medium',
-        status: 'active',
-        progress: 0
-      });
-    }
-
-    // Medication adherence goal
-    if (analysis.adherenceRate < 0.9) {
-      goals.push({
-        id: `goal_adherence_${Date.now()}`,
-        category: 'medication',
-        title: 'Medication Adherence',
-        description: 'Improve medication compliance',
-        target: 'Take medications as prescribed >90% of the time',
-        timeframe: '1 month',
-        priority: 'high',
-        status: 'active',
-        progress: Math.round(analysis.adherenceRate * 100)
       });
     }
 
@@ -304,92 +374,65 @@ class CarePlanService {
   private generateRecommendations(analysis: HealthDataAnalysis): CarePlanRecommendation[] {
     const recommendations: CarePlanRecommendation[] = [];
 
-    // Diabetes recommendations
-    if (analysis.conditions.includes('Type 2 Diabetes')) {
-      recommendations.push({
-        id: `rec_glucose_monitoring_${Date.now()}`,
-        type: 'monitoring',
-        title: 'Blood Glucose Monitoring',
-        description: 'Monitor blood glucose levels regularly',
-        rationale: 'Regular monitoring helps track diabetes control and adjust treatment',
-        frequency: 'Daily before meals and bedtime',
-        priority: 'high',
-        evidenceLevel: 'A'
-      });
-
-      recommendations.push({
-        id: `rec_diabetes_education_${Date.now()}`,
-        type: 'education',
-        title: 'Diabetes Self-Management Education',
-        description: 'Participate in structured diabetes education program',
-        rationale: 'Education improves self-management skills and outcomes',
-        frequency: 'Initial program, annual refresher',
-        priority: 'high',
-        evidenceLevel: 'A'
-      });
-    }
-
-    // Hypertension recommendations
-    if (analysis.conditions.includes('Hypertension')) {
-      recommendations.push({
-        id: `rec_bp_monitoring_${Date.now()}`,
-        type: 'monitoring',
-        title: 'Blood Pressure Monitoring',
-        description: 'Monitor blood pressure at home',
-        rationale: 'Home monitoring improves BP control and medication adherence',
-        frequency: 'Daily, same time each day',
-        priority: 'high',
-        evidenceLevel: 'A'
-      });
-
-      recommendations.push({
-        id: `rec_sodium_reduction_${Date.now()}`,
-        type: 'diet',
-        title: 'Sodium Restriction',
-        description: 'Limit sodium intake to <2300mg per day',
-        rationale: 'Sodium reduction lowers blood pressure',
-        frequency: 'Daily',
-        priority: 'medium',
-        evidenceLevel: 'A'
-      });
-    }
-
-    // General lifestyle recommendations
+    // Diet
     recommendations.push({
-      id: `rec_exercise_${Date.now()}`,
-      type: 'exercise',
-      title: 'Regular Physical Activity',
-      description: 'Engage in moderate-intensity aerobic exercise',
-      rationale: 'Exercise improves glucose control, blood pressure, and overall health',
-      frequency: '150 minutes per week, spread over 3-5 days',
-      priority: 'high',
-      evidenceLevel: 'A'
-    });
-
-    recommendations.push({
-      id: `rec_nutrition_${Date.now()}`,
+      id: crypto.randomUUID(),
       type: 'diet',
-      title: 'Balanced Nutrition',
-      description: 'Follow a balanced, nutrient-rich diet',
-      rationale: 'Proper nutrition supports chronic disease management',
-      frequency: 'Daily meal planning',
+      title: 'Reduce sodium intake',
+      description: 'Limit sodium to less than 2,300 mg per day to help manage blood pressure.',
+      rationale: 'High sodium intake is linked to increased blood pressure.',
+      frequency: 'Daily',
       priority: 'high',
       evidenceLevel: 'A'
     });
 
-    // Medication adherence recommendation
-    if (analysis.adherenceRate < 0.9) {
-      recommendations.push({
-        id: `rec_med_adherence_${Date.now()}`,
-        type: 'medication',
-        title: 'Medication Adherence Support',
-        description: 'Use pill organizers, reminders, and regular pharmacy consultations',
-        rationale: 'Good adherence is essential for treatment effectiveness',
-        frequency: 'Daily medication routine',
-        priority: 'high',
-        evidenceLevel: 'A'
-      });
-    }
+    // Exercise
+    recommendations.push({
+      id: crypto.randomUUID(),
+      type: 'exercise',
+      title: 'Regular aerobic exercise',
+      description: 'Engage in at least 150 minutes of moderate-intensity aerobic activity per week.',
+      rationale: 'Regular exercise improves cardiovascular health and reduces risk factors.',
+      frequency: 'Weekly',
+      priority: 'medium',
+      evidenceLevel: 'A'
+    });
+
+    // Monitoring
+    recommendations.push({
+      id: crypto.randomUUID(),
+      type: 'monitoring',
+      title: 'Home glucose monitoring',
+      description: 'Check blood glucose levels daily and record readings.',
+      rationale: 'Regular monitoring helps manage diabetes and detect changes early.',
+      frequency: 'Daily',
+      priority: 'high',
+      evidenceLevel: 'B'
+    });
+
+    // Lifestyle
+    recommendations.push({
+      id: crypto.randomUUID(),
+      type: 'lifestyle',
+      title: 'Stress management techniques',
+      description: 'Practice mindfulness, meditation, or yoga to reduce stress.',
+      rationale: 'Stress can negatively impact cardiovascular and metabolic health.',
+      frequency: 'Daily',
+      priority: 'medium',
+      evidenceLevel: 'B'
+    });
+
+    // Education
+    recommendations.push({
+      id: crypto.randomUUID(),
+      type: 'education',
+      title: 'Understanding hypertension',
+      description: 'Learn the causes, symptoms, and treatments of hypertension.',
+      rationale: 'Knowledge empowers better self-care and adherence to treatment plans.',
+      frequency: 'Monthly',
+      priority: 'low',
+      evidenceLevel: 'C'
+    });
 
     return recommendations;
   }
@@ -397,94 +440,85 @@ class CarePlanService {
   private generateEmergencyPlan(analysis: HealthDataAnalysis): CarePlan['emergencyPlan'] {
     const warningSignsDescription = this.getWarningSignsForConditions(analysis.conditions);
     const emergencyActions = this.getEmergencyActionsForConditions(analysis.conditions);
-    
+    const emergencyContacts = [
+      'Primary Care Physician: (555) 123-4567',
+      'Emergency: 911',
+      'Family Contact: (555) 987-6543'
+    ];
+
     return {
       warningSignsDescription,
       emergencyActions,
-      emergencyContacts: [
-        'Primary Care Provider',
-        'Emergency Services: 911',
-        'Poison Control: 1-800-222-1222'
-      ]
+      emergencyContacts
     };
   }
 
   private getWarningSignsForConditions(conditions: string[]): string {
     const signs: string[] = [];
-    
-    if (conditions.includes('Type 2 Diabetes') || conditions.includes('Prediabetes')) {
-      signs.push('Severe high blood sugar (>300 mg/dL), excessive thirst, frequent urination, nausea, vomiting');
-      signs.push('Low blood sugar (<70 mg/dL), shakiness, sweating, confusion, rapid heartbeat');
+    if (conditions.includes('hypertension')) {
+      signs.push('Severe headache', 'Chest pain', 'Shortness of breath', 'Vision changes');
     }
-    
-    if (conditions.includes('Hypertension')) {
-      signs.push('Severe headache, chest pain, difficulty breathing, vision changes');
-      signs.push('Blood pressure >180/120 mmHg');
+    if (conditions.includes('diabetes')) {
+      signs.push('Extreme thirst', 'Frequent urination', 'Blurred vision', 'Fatigue');
     }
-    
-    return signs.join('; ');
+    if (conditions.includes('obesity')) {
+      signs.push('Joint pain', 'Sleep apnea', 'Fatigue');
+    }
+    return signs.join('. ');
   }
 
   private getEmergencyActionsForConditions(conditions: string[]): string[] {
     const actions: string[] = [];
-    
-    actions.push('Call 911 for severe symptoms or if unsure');
-    actions.push('Contact primary care provider for urgent but non-emergency concerns');
-    
-    if (conditions.includes('Type 2 Diabetes')) {
-      actions.push('For low blood sugar: consume 15g fast-acting carbs, recheck in 15 minutes');
-      actions.push('For high blood sugar: check ketones if available, increase fluid intake');
+    if (conditions.includes('hypertension')) {
+      actions.push('Rest and monitor blood pressure', 'Take prescribed medication', 'Call emergency services if symptoms worsen');
     }
-    
-    if (conditions.includes('Hypertension')) {
-      actions.push('For severe hypertension: rest in quiet environment, avoid sudden movements');
+    if (conditions.includes('diabetes')) {
+      actions.push('Check blood sugar', 'Take insulin as prescribed', 'Seek medical help if levels remain high');
     }
-    
+    if (conditions.includes('obesity')) {
+      actions.push('Engage in light physical activity', 'Follow dietary recommendations', 'Consult a healthcare provider');
+    }
     return actions;
   }
 
-  // Store care plan in database
   async storeCarePlan(carePlan: CarePlan): Promise<void> {
+    const ok = await this.checkCarePlansTable();
+    if (!ok) return;
+
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not authenticated');
+
+      const dbRecord = {
+        id: carePlan.id,
+        user_id: carePlan.userId,
+        patient_name: carePlan.patientName,
+        conditions: carePlan.conditions,
+        risk_level: carePlan.riskLevel,
+        overall_health_score: carePlan.overallHealthScore,
+        goals: carePlan.goals,
+        recommendations: carePlan.recommendations,
+        emergency_plan: carePlan.emergencyPlan,
+        next_review_date: carePlan.nextReviewDate,
+        created_at: carePlan.createdAt,
+        updated_at: carePlan.updatedAt,
+      };
+
       const { error } = await supabase
         .from('care_plans')
-        .upsert({
-          id: carePlan.id,
-          user_id: carePlan.userId,
-          patient_name: carePlan.patientName,
-          conditions: carePlan.conditions,
-          risk_level: carePlan.riskLevel,
-          overall_health_score: carePlan.overallHealthScore,
-          goals: carePlan.goals,
-          recommendations: carePlan.recommendations,
-          emergency_plan: carePlan.emergencyPlan,
-          next_review_date: carePlan.nextReviewDate,
-          created_at: carePlan.createdAt,
-          updated_at: carePlan.updatedAt
-        });
-
+        .upsert(dbRecord);
       if (error) throw error;
-
-      // Update cache after successful storage
-      this.cachedCarePlan = carePlan;
-      this.cacheTimestamp = Date.now();
     } catch (error) {
       console.error('Error storing care plan:', error);
       throw error;
     }
   }
 
-  // Get latest care plan for user
   async getLatestCarePlan(userId: string): Promise<CarePlan | null> {
-    try {
-      // Check cache first
-      const now = Date.now();
-      if (this.cachedCarePlan && 
-          this.cachedCarePlan.userId === userId && 
-          (now - this.cacheTimestamp) < this.CACHE_DURATION) {
-        return this.cachedCarePlan;
-      }
+    const ok = await this.checkCarePlansTable();
+    if (!ok) return null;
 
+    try {
       const { data, error } = await supabase
         .from('care_plans')
         .select('*')
@@ -492,12 +526,10 @@ class CarePlanService {
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
-
       if (error) {
-        if (error.code === 'PGRST116') return null; // No data found
+        if ((error as any)?.code === 'PGRST116') return null; // No rows
         throw error;
       }
-
       const carePlan: CarePlan = {
         id: data.id,
         userId: data.user_id,
@@ -510,59 +542,55 @@ class CarePlanService {
         emergencyPlan: data.emergency_plan,
         nextReviewDate: data.next_review_date,
         createdAt: data.created_at,
-        updatedAt: data.updated_at
+        updatedAt: data.updated_at,
       };
-
-      // Cache the result
-      this.cachedCarePlan = carePlan;
-      this.cacheTimestamp = now;
-
       return carePlan;
     } catch (error) {
-      console.error('Error getting care plan:', error);
-      throw error;
+      console.error('Error fetching latest care plan:', error);
+      return null;
     }
   }
 
-  // Update goal progress
   async updateGoalProgress(carePlanId: string, goalId: string, progress: number): Promise<void> {
+    const ok = await this.checkCarePlansTable();
+    if (!ok) return;
+
     try {
-      const carePlan = await this.getCarePlanById(carePlanId);
-      if (!carePlan) throw new Error('Care plan not found');
-
-      const updatedGoals = carePlan.goals.map(goal => 
-        goal.id === goalId 
-          ? { ...goal, progress, status: progress >= 100 ? 'completed' as const : goal.status }
-          : goal
-      );
-
-      await supabase
+      const { data: existing, error } = await supabase
         .from('care_plans')
-        .update({
-          goals: updatedGoals,
-          updated_at: new Date().toISOString()
-        })
+        .select('*')
+        .eq('id', carePlanId)
+        .limit(1);
+      if (error) throw error;
+      if (!existing || existing.length === 0) return;
+
+      const plan = existing[0] as CarePlan;
+      const updatedGoals = plan.goals.map(g => g.id === goalId ? { ...g, progress } : g);
+      const { error: upErr } = await supabase
+        .from('care_plans')
+        .update({ goals: updatedGoals, updated_at: new Date().toISOString() })
         .eq('id', carePlanId);
+      if (upErr) throw upErr;
     } catch (error) {
       console.error('Error updating goal progress:', error);
-      throw error;
     }
   }
 
   private async getCarePlanById(carePlanId: string): Promise<CarePlan | null> {
+    const ok = await this.checkCarePlansTable();
+    if (!ok) return null;
+
     try {
       const { data, error } = await supabase
         .from('care_plans')
         .select('*')
         .eq('id', carePlanId)
         .single();
-
       if (error) {
-        if (error.code === 'PGRST116') return null;
+        if ((error as any)?.code === 'PGRST116') return null;
         throw error;
       }
-
-      return {
+      const carePlan: CarePlan = {
         id: data.id,
         userId: data.user_id,
         patientName: data.patient_name,
@@ -574,11 +602,12 @@ class CarePlanService {
         emergencyPlan: data.emergency_plan,
         nextReviewDate: data.next_review_date,
         createdAt: data.created_at,
-        updatedAt: data.updated_at
+        updatedAt: data.updated_at,
       };
+      return carePlan;
     } catch (error) {
-      console.error('Error getting care plan by ID:', error);
-      throw error;
+      console.error('Error fetching care plan by id:', error);
+      return null;
     }
   }
 }

@@ -83,10 +83,13 @@ function Dashboard() {
       try {
         const latestScore = await mlService.getLatestHealthScore();
         if (latestScore) {
+          console.log('[Dashboard] Latest health_score:', latestScore);
           setHealthScore(latestScore.health_score);
           setComplicationRiskDelta(-Math.round(latestScore.complication_risk));
           setEmergencyVisitsDelta(-Math.round(latestScore.emergency_visits));
           setAdherenceRate(Math.round(latestScore.adherence_rate));
+        } else {
+          console.log('[Dashboard] No latest health_score found');
         }
       } catch (error) {
         console.error('Error fetching latest health score:', error);
@@ -136,6 +139,7 @@ function Dashboard() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
+          console.log('[Dashboard] Fetching vital_signs for user', user.id);
           const { data, error } = await supabase
             .from('vital_signs')
             .select('*')
@@ -144,6 +148,8 @@ function Dashboard() {
             .limit(14);
 
           if (error) throw error;
+
+          console.log('[Dashboard] vital_signs count:', data?.length || 0);
 
           if (data && data.length > 0) {
             const latestData = data[0];
@@ -236,6 +242,7 @@ function Dashboard() {
             }
 
             setMetrics(newMetrics);
+            console.log('[Dashboard] Updated metrics:', newMetrics);
 
             // Call backend health model
             const glucose = Number(latestData.blood_glucose) || 0;
@@ -253,6 +260,7 @@ function Dashboard() {
                 temperature,
                 weight,
               });
+              console.log('[Dashboard] health_overall prediction:', pred);
               // Health score: invert complication risk
               setHealthScore(Math.round(100 - pred.complication_risk));
               setAdherenceRate(Math.round(pred.adherence_rate));
@@ -263,30 +271,80 @@ function Dashboard() {
               const { data: { user } } = await supabase.auth.getUser();
               if (user) {
                 try {
-                  await supabase.from('health_predictions').insert({
+                  const { data: existing, error: existingErr } = await supabase
+                    .from('health_predictions')
+                    .select('id, recorded_at')
+                    .eq('user_id', user.id)
+                    .order('recorded_at', { ascending: false })
+                    .limit(1);
+
+                  if (existingErr) {
+                    console.error('[Dashboard] Error querying health_predictions:', existingErr);
+                  }
+
+                  const now = new Date();
+                  const payload = {
                     user_id: user.id,
                     complication_risk: pred.complication_risk,
                     emergency_visits: pred.emergency_visits,
                     adherence_rate: pred.adherence_rate,
                     recorded_at: new Date().toISOString(),
-                  });
-                } catch {}
+                  };
+
+                  if (existing && existing.length > 0) {
+                    const last = existing[0];
+                    const lastCreated = new Date(last.recorded_at as string);
+                    const isSameDay = lastCreated.toDateString() === now.toDateString();
+                    const withinFiveMinutes = (now.getTime() - lastCreated.getTime()) < 5 * 60 * 1000;
+                    if (isSameDay || withinFiveMinutes) {
+                      const { error: upErr } = await supabase
+                        .from('health_predictions')
+                        .update(payload)
+                        .eq('id', last.id);
+                      if (upErr) console.error('[Dashboard] Error updating health_predictions:', upErr);
+                      else console.log('[Dashboard] Updated existing health_predictions:', last.id);
+                    } else {
+                      const { error: insErr } = await supabase
+                        .from('health_predictions')
+                        .insert(payload);
+                      if (insErr) console.error('[Dashboard] Error inserting health_predictions:', insErr);
+                      else console.log('[Dashboard] Inserted new health_predictions');
+                    }
+                  } else {
+                    const { error: insErr } = await supabase
+                      .from('health_predictions')
+                      .insert(payload);
+                    if (insErr) console.error('[Dashboard] Error inserting health_predictions:', insErr);
+                    else console.log('[Dashboard] Inserted new health_predictions');
+                  }
+                } catch (predStoreErr) {
+                  console.error('[Dashboard] Error storing prediction history:', predStoreErr);
+                }
                 try {
-                  const { data: hist } = await supabase
+                  const { data: hist, error: histErr } = await supabase
                     .from('health_predictions')
-                    .select('complication_risk, recorded_at')
+                    .select('complication_risk, recorded_at, created_at')
                     .eq('user_id', user.id)
                     .order('recorded_at', { ascending: true })
                     .limit(20);
-                  if (hist) {
-                    setRiskHistory(
-                      hist.map((h: any) => ({
-                        date: new Date(h.recorded_at).toLocaleDateString([], { month: 'short', day: 'numeric' }),
-                        complication: Math.round(h.complication_risk),
-                      }))
-                    );
+                  if (histErr) {
+                    console.error('[Dashboard] Error fetching prediction history:', histErr);
                   }
-                } catch {}
+                  if (hist) {
+                    const mapped = hist.map((h: any) => {
+                      const ts = h.recorded_at || h.created_at || new Date().toISOString();
+                      const comp = Number(h.complication_risk);
+                      return {
+                        date: new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' }),
+                        complication: Number.isFinite(comp) ? Math.round(comp) : 0,
+                      };
+                    });
+                    console.log('[Dashboard] riskHistory mapped length:', mapped.length);
+                    setRiskHistory(mapped);
+                  }
+                } catch (histErr) {
+                  console.error('[Dashboard] Error mapping risk history:', histErr);
+                }
               }
             } catch (e) {
               console.warn('Health model prediction failed:', e);
@@ -314,12 +372,36 @@ function Dashboard() {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'vital_signs' },
-        () => fetchVitalSigns()
+        (payload) => {
+          console.log('[Dashboard] realtime vital_signs INSERT:', payload);
+          fetchVitalSigns();
+          fetchLatestHealthScore();
+        }
+      )
+      // Also listen for health_score changes to update dashboard instantly
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'health_score' },
+        (payload) => {
+          console.log('[Dashboard] realtime health_score INSERT:', payload);
+          fetchLatestHealthScore();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'health_score' },
+        (payload) => {
+          console.log('[Dashboard] realtime health_score UPDATE:', payload);
+          fetchLatestHealthScore();
+        }
       )
       .subscribe();
 
+    console.log('[Dashboard] Subscribed to realtime channels');
+
     return () => {
       supabase.removeChannel(channel);
+      console.log('[Dashboard] Unsubscribed from realtime channels');
     };
   }, []);
 

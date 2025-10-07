@@ -107,28 +107,34 @@ function CarePlan() {
   };
 
   const generateSampleMedications = (conditions: string[]) => {
-    const medications: Medication[] = [];
-    
-    if (conditions.includes('diabetes')) {
-      medications.push(
-        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily', time: '8:00 AM', taken: true },
-        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily', time: '8:00 PM', taken: false }
+    const meds: Medication[] = [];
+  
+    // Normalize condition names to lower-case for matching
+    const normalized = conditions.map(c => c.toLowerCase());
+  
+    if (normalized.some(c => c.includes('diabetes'))) {
+      meds.push(
+        { name: 'Metformin', dosage: '500mg', frequency: 'Twice daily with meals', time: '8:00 AM', taken: false },
+        { name: 'Insulin Glargine', dosage: '10 units', frequency: 'Once daily at bedtime', time: '10:00 PM', taken: false }
       );
     }
-    
-    if (conditions.includes('hypertension')) {
-      medications.push(
-        { name: 'Lisinopril', dosage: '10mg', frequency: 'Once daily', time: '8:00 AM', taken: true }
+  
+    if (normalized.some(c => c.includes('hypertension') || c.includes('elevated blood pressure'))) {
+      meds.push(
+        { name: 'Lisinopril', dosage: '10mg', frequency: 'Once daily', time: '8:00 AM', taken: false },
+        { name: 'Amlodipine', dosage: '5mg', frequency: 'Once daily', time: '8:00 PM', taken: false }
       );
     }
-    
-    if (conditions.includes('heart')) {
-      medications.push(
-        { name: 'Atorvastatin', dosage: '20mg', frequency: 'Once daily', time: '9:00 PM', taken: false }
-      );
+  
+    if (normalized.some(c => c.includes('heart'))) {
+      meds.push({ name: 'Atorvastatin', dosage: '20mg', frequency: 'Once daily', time: '9:00 PM', taken: false });
     }
-    
-    return medications;
+  
+    if (normalized.some(c => c.includes('obesity') || c.includes('overweight'))) {
+      meds.push({ name: 'Orlistat', dosage: '120mg', frequency: 'Three times daily with meals', time: 'With meals', taken: false });
+    }
+  
+    return meds;
   };
 
   const toggleMedication = (index: number) => {

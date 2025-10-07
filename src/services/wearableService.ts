@@ -25,11 +25,47 @@ export interface DeviceInfo {
 }
 
 class WearableService {
+  // Cached table existence to avoid repeated 404/PGRST205
+  private tableExistenceCache: Record<string, { exists: boolean; timestamp: number }> = {};
+  private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+  private async checkTableExists(table: string): Promise<boolean> {
+    const now = Date.now();
+    const cached = this.tableExistenceCache[table];
+    if (cached && now - cached.timestamp < this.CACHE_DURATION) {
+      return cached.exists;
+    }
+    try {
+      const { error } = await supabase.from(table).select('id').limit(1);
+      if (error) {
+        const code = (error as any)?.code || '';
+        const msg = ((error as any)?.message || '').toLowerCase();
+        if (code === 'PGRST205' || msg.includes('could not find the table') || msg.includes('relation')) {
+          this.tableExistenceCache[table] = { exists: false, timestamp: now };
+          console.warn(`[wearableService] Table '${table}' missing or not in schema cache; skipping queries.`);
+          return false;
+        }
+      }
+      this.tableExistenceCache[table] = { exists: true, timestamp: now };
+      return true;
+    } catch (e) {
+      console.warn(`[wearableService] Error checking existence for '${table}':`, e);
+      this.tableExistenceCache[table] = { exists: false, timestamp: now };
+      return false;
+    }
+  }
+
   // Store wearable data to Supabase
   async storeWearableData(data: Omit<WearableData, 'id' | 'user_id'>): Promise<void> {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
+
+      const exists = await this.checkTableExists('wearable_data');
+      if (!exists) {
+        console.warn('[wearableService] Skipping wearable_data insert because table is missing');
+        return;
+      }
 
       const wearableData: Omit<WearableData, 'id'> = {
         ...data,
@@ -53,6 +89,12 @@ class WearableService {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return null;
 
+      const exists = await this.checkTableExists('wearable_data');
+      if (!exists) {
+        console.warn('[wearableService] Skipping getLatestWearableData because table is missing');
+        return null;
+      }
+
       const { data, error } = await supabase
         .from('wearable_data')
         .select('*')
@@ -73,6 +115,12 @@ class WearableService {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return [];
+
+      const exists = await this.checkTableExists('wearable_data');
+      if (!exists) {
+        console.warn('[wearableService] Skipping getWearableDataHistory because table is missing');
+        return [];
+      }
 
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - days);
