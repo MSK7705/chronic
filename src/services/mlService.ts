@@ -18,6 +18,33 @@ class MLService {
   private tableExistenceCache: Record<string, { exists: boolean; timestamp: number }> = {};
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+  // Normalize features per model so backend gets expected shapes/types
+  private normalizeFeatures(modelType: MLPredictionRequest['modelType'], features: Record<string, any>) {
+    if (modelType === 'heart') {
+      const normalized = { ...features };
+      // Ensure numeric fields are numbers
+      ['age', 'trestbps', 'chol', 'thalch'].forEach((k) => {
+        if (normalized[k] !== undefined) normalized[k] = typeof normalized[k] === 'string' ? parseFloat(normalized[k]) : normalized[k];
+      });
+      // Convert fbs to boolean-like 0/1 to match encoders trained on 0/1
+      if (normalized['fbs'] !== undefined) {
+        const v = normalized['fbs'];
+        if (typeof v === 'string') {
+          normalized['fbs'] = v.toLowerCase() === 'yes' ? 1 : 0;
+        } else if (typeof v === 'boolean') {
+          normalized['fbs'] = v ? 1 : 0;
+        }
+      }
+      // Sex stays as 'Male'/'Female' which encoders can handle, but coerce to consistent casing
+      if (normalized['sex'] !== undefined && typeof normalized['sex'] === 'string') {
+        const s = normalized['sex'].toLowerCase();
+        normalized['sex'] = s.startsWith('m') ? 'Male' : 'Female';
+      }
+      return normalized;
+    }
+    return features;
+  }
+
   private async checkTableExists(table: string): Promise<boolean> {
     const now = Date.now();
     const cached = this.tableExistenceCache[table];
@@ -46,12 +73,13 @@ class MLService {
 
   async predictRisk(request: MLPredictionRequest): Promise<MLPredictionResponse> {
     try {
+      const normalizedFeatures = this.normalizeFeatures(request.modelType, request.features);
       const response = await fetch(`${this.baseUrl}/predict/disease/${request.modelType}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ features: request.features }),
+        body: JSON.stringify({ features: normalizedFeatures }),
       });
 
       if (!response.ok) {

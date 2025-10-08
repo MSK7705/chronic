@@ -154,7 +154,8 @@ def load_model_artifacts(model_type: str):
         return None
     
     artifacts = {}
-    base_path = Path(config["path"])
+    # Resolve artifact base path relative to this file to ensure correctness on Render
+    base_path = (Path(__file__).resolve().parent / config["path"]).resolve()
     
     try:
         # Load model
@@ -193,7 +194,10 @@ def load_model_artifacts(model_type: str):
         return None
 
 def encode_categorical_features(features: Dict[str, Any], model_type: str) -> Dict[str, Any]:
-    """Convert user-friendly responses to numerical values for ML models"""
+    """Convert user-friendly responses to numerical values for ML models.
+    For the heart model, skip manual mapping for categorical columns so that
+    the saved encoders (LabelEncoder/OneHotEncoder) can handle raw strings.
+    """
     mapping = {
         # Gender
         'Male': 1, 'Female': 0,
@@ -219,25 +223,6 @@ def encode_categorical_features(features: Dict[str, Any], model_type: str) -> Di
         # Blood pressure
         'Normal BP': 0, 'Slightly high': 1, 'High BP': 2, 'Very high BP': 3,
         
-        # Appetite
-        'Good appetite': 1, 'Poor appetite': 0,
-        
-        # Breathing
-        'Never': 0, 'With heavy activity': 1, 'With light activity': 2, 'At rest': 3,
-        
-        # Exposure
-        'No exposure': 0, 'Some exposure': 1, 'High exposure': 2,
-        
-        # Alcohol
-        'Never': 0, 'Occasionally': 1, 'Regularly': 2, 'Heavily': 3,
-        
-        # Time periods
-        'Less than 30 minutes': 1, '30 minutes to 1 hour': 2, 'More than 1 hour': 3,
-        
-        # Frequency
-        'Sometimes tired': 1, 'Often tired': 2, 'Always tired': 3,
-        'Slightly yellow': 1, 'Noticeably yellow': 2,
-        
         # Allergies
         'No allergies': 0, 'Mild allergies': 1, 'Moderate allergies': 2, 'Severe allergies': 3,
         
@@ -245,8 +230,13 @@ def encode_categorical_features(features: Dict[str, Any], model_type: str) -> Di
         'Low salt diet': 0, 'Normal amount': 1, 'High salt diet': 2
     }
     
-    encoded_features = {}
+    encoded_features: Dict[str, Any] = {}
     for key, value in features.items():
+        # For heart model, let encoders handle raw categorical strings for columns like 'sex' and 'fbs'
+        if model_type == "heart" and key in MODEL_CONFIGS.get("heart", {}).get("categorical_cols", []):
+            encoded_features[key] = value
+            continue
+        
         if isinstance(value, str) and value in mapping:
             encoded_features[key] = mapping[value]
         elif isinstance(value, str) and value.isdigit():
@@ -271,7 +261,7 @@ def make_prediction(model_type: str, features: Dict[str, Any]):
             # Heart disease specific processing - handle encoders properly
             df = pd.DataFrame([encoded_features])
             
-            # Apply encoding if available - handle unseen labels gracefully
+            # Impute
             if "encoders" in artifacts and "categorical_cols" in config:
                 for col in config["categorical_cols"]:
                     if col in df.columns:
