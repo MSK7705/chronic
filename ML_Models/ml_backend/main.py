@@ -153,6 +153,13 @@ class HealthPredictionResponse(BaseModel):
 
 # Enhance artifact loader with diagnostic logs
 ARTIFACT_CACHE: Dict[str, Dict[str, Any]] = {}
+CSV_MAP = {
+    "heart": "heart.csv",
+    "diabetes": "diabetes.csv",
+    "ckd": "ckd.csv",
+    "asthma": "asthma_disease_data.csv",
+    "hypertension": "hypertension.csv",
+}
 def load_model_artifacts(model_type: str):
     """Load all model artifacts for a given model type"""
     # Serve from cache if available
@@ -203,15 +210,15 @@ def load_model_artifacts(model_type: str):
             if cat_imputer_path.exists():
                 artifacts["cat_imputer"] = joblib.load(cat_imputer_path)
 
-        # If artifacts are missing, attempt fallback training (heart only)
-        if "model" not in artifacts and model_type == "heart":
-            print("[heart] Pretrained artifacts missing. Starting fallback training from CSV...")
-            fallback = train_heart_model_fallback(base_path)
+        # If artifacts are missing, attempt fallback training (supported models)
+        if "model" not in artifacts:
+            print(f"[{model_type}] Pretrained artifacts missing. Starting fallback training from CSV...")
+            fallback = train_model_fallback(model_type, base_path)
             if fallback:
                 ARTIFACT_CACHE[model_type] = fallback
                 return fallback
             else:
-                print("[heart] Fallback training could not run (CSV missing or error).")
+                print(f"[{model_type}] Fallback training could not run (CSV missing or error).")
                 return None
 
         # Cache and return loaded artifacts
@@ -499,6 +506,86 @@ async def get_models_status():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+def train_model_fallback(model_type: str, base_path: Path):
+    """Generic fallback trainer for supported models when pretrained artifacts are missing.
+    Uses CSV_MAP filenames and MODEL_CONFIGS to build a preprocessing + XGBClassifier pipeline.
+    Returns artifacts dict or None if unavailable.
+    """
+    try:
+        csv_name = CSV_MAP.get(model_type)
+        if not csv_name:
+            return None
+        data_path = base_path / csv_name
+        print(f"[{model_type}] Fallback training from CSV: {data_path} exists={data_path.exists()}")
+        if not data_path.exists():
+            print(f"[{model_type}] CSV not found; cannot fallback-train.")
+            return None
+
+        df = pd.read_csv(data_path)
+        cfg = MODEL_CONFIGS[model_type]
+        features = cfg["features"]
+        X = df[features].copy()
+        target_col = df.columns[-1]
+        y = df[target_col].copy()
+        # Convert target to binary if not already
+        try:
+            y = y.apply(lambda x: 1 if x > 0 else 0)
+        except Exception:
+            y = (y.astype(int) > 0).astype(int)
+
+        categorical_cols = cfg.get("categorical_cols", [])
+        numerical_cols = [c for c in features if c not in categorical_cols]
+
+        # Impute
+        num_imputer = SimpleImputer(strategy="median")
+        if numerical_cols:
+            X[numerical_cols] = num_imputer.fit_transform(X[numerical_cols])
+        cat_imputer = SimpleImputer(strategy="most_frequent")
+        if categorical_cols:
+            X[categorical_cols] = cat_imputer.fit_transform(X[categorical_cols])
+
+        # Encode categorical
+        label_encoders = {}
+        for col in categorical_cols:
+            le = LabelEncoder()
+            X[col] = le.fit_transform(X[col])
+            label_encoders[col] = le
+
+        # Scale
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X[features])
+
+        # Class imbalance handling
+        counter = Counter(y)
+        pos = int(counter.get(1, 0))
+        neg = int(counter.get(0, 0))
+        scale_pos_weight = (neg / pos) if pos > 0 else 1.0
+
+        # Train XGBClassifier
+        model = XGBClassifier(
+            n_estimators=300,
+            max_depth=4,
+            learning_rate=0.1,
+            use_label_encoder=False,
+            eval_metric="logloss",
+            random_state=42,
+            scale_pos_weight=scale_pos_weight,
+        )
+        model.fit(X_scaled, y)
+        print(f"✅ [{model_type}] Fallback model trained and in-memory artifacts created")
+        artifacts = {
+            "model": model,
+            "scaler": scaler,
+            "encoders": label_encoders,
+            "num_imputer": num_imputer,
+            "cat_imputer": cat_imputer,
+        }
+        return artifacts
+    except Exception as e:
+        print(f"[{model_type}] Fallback training failed: {e}")
+        return None
 
 
 def train_heart_model_fallback(base_path: Path):
