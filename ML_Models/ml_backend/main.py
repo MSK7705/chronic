@@ -147,6 +147,7 @@ class HealthPredictionResponse(BaseModel):
     emergency_visits: float
     adherence_rate: float
 
+# Enhance artifact loader with diagnostic logs
 def load_model_artifacts(model_type: str):
     """Load all model artifacts for a given model type"""
     config = MODEL_CONFIGS.get(model_type)
@@ -156,34 +157,40 @@ def load_model_artifacts(model_type: str):
     artifacts = {}
     # Resolve artifact base path relative to this file to ensure correctness on Render
     base_path = (Path(__file__).resolve().parent / config["path"]).resolve()
+    print(f"[{model_type}] Base path: {base_path}")
     
     try:
         # Load model
         model_path = base_path / config["model_file"]
+        print(f"[{model_type}] Model path: {model_path} exists={model_path.exists()}")
         if model_path.exists():
             artifacts["model"] = joblib.load(model_path)
         
         # Load scaler
         if "scaler_file" in config:
             scaler_path = base_path / config["scaler_file"]
+            print(f"[{model_type}] Scaler path: {scaler_path} exists={scaler_path.exists()}")
             if scaler_path.exists():
                 artifacts["scaler"] = joblib.load(scaler_path)
         
         # Load encoders
         if "encoders_file" in config:
             encoders_path = base_path / config["encoders_file"]
+            print(f"[{model_type}] Encoders path: {encoders_path} exists={encoders_path.exists()}")
             if encoders_path.exists():
                 artifacts["encoders"] = joblib.load(encoders_path)
         
         # Load numerical imputer
         if "num_imputer_file" in config:
             num_imputer_path = base_path / config["num_imputer_file"]
+            print(f"[{model_type}] Num imputer path: {num_imputer_path} exists={num_imputer_path.exists()}")
             if num_imputer_path.exists():
                 artifacts["num_imputer"] = joblib.load(num_imputer_path)
         
         # Load categorical imputer
         if "cat_imputer_file" in config:
             cat_imputer_path = base_path / config["cat_imputer_file"]
+            print(f"[{model_type}] Cat imputer path: {cat_imputer_path} exists={cat_imputer_path.exists()}")
             if cat_imputer_path.exists():
                 artifacts["cat_imputer"] = joblib.load(cat_imputer_path)
         
@@ -413,6 +420,23 @@ async def startup_event():
         status = "✅ Loaded" if artifacts else "❌ Failed"
         print(f"   {model_name}: {status}")
     train_health_model()
+
+@app.get("/models_status")
+async def get_models_status():
+    status = {}
+    for name, cfg in MODEL_CONFIGS.items():
+        artifacts = load_model_artifacts(name)
+        base_path = (Path(__file__).resolve().parent / cfg["path"]).resolve()
+        status[name] = {
+            "loaded": bool(artifacts),
+            "base_path": str(base_path),
+            "model_file": cfg.get("model_file"),
+            "scaler_file": cfg.get("scaler_file"),
+            "encoders_file": cfg.get("encoders_file"),
+            "num_imputer_file": cfg.get("num_imputer_file"),
+            "cat_imputer_file": cfg.get("cat_imputer_file"),
+        }
+    return status
 
 if __name__ == "__main__":
     import uvicorn
