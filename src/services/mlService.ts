@@ -46,7 +46,7 @@ class MLService {
 
   async predictRisk(request: MLPredictionRequest): Promise<MLPredictionResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/predict/${request.modelType}`, {
+      const response = await fetch(`${this.baseUrl}/predict/disease/${request.modelType}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

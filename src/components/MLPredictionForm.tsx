@@ -11,7 +11,14 @@ function MLPredictionForm({ onPredictionResult }: MLPredictionFormProps) {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [isLoading, setIsLoading] = useState(false);
 
-  const modelConfigs = {
+  // Define field config type to satisfy TypeScript unions for fields and options
+  type FieldConfig =
+    | { key: string; label: string; type: 'number'; min: number; max: number; help: string; step?: number }
+    | { key: string; label: string; type: 'select'; options: string[]; help: string }
+    | { key: string; label: string; type: 'boolean'; help: string }
+    | { key: string; label: string; type: 'text'; help: string };
+
+  const modelConfigs: Record<string, { name: string; fields: FieldConfig[] }> = {
     heart: {
       name: 'Heart Disease Risk',
       fields: [
@@ -26,79 +33,89 @@ function MLPredictionForm({ onPredictionResult }: MLPredictionFormProps) {
     diabetes: {
       name: 'Diabetes Risk',
       fields: [
-        { key: 'glucose', label: 'Blood Sugar Level', type: 'number', min: 50, max: 300, help: 'Your glucose level from blood test (mg/dL)' },
-        { key: 'bloodPressure', label: 'Blood Pressure', type: 'number', min: 60, max: 180, help: 'Your diastolic blood pressure (bottom number)' },
-        { key: 'bmi', label: 'Body Mass Index (BMI)', type: 'number', min: 15, max: 50, help: 'Calculate: weight(kg) ÷ height(m)²' },
-        { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
-        { key: 'pregnancies', label: 'Number of Pregnancies', type: 'number', min: 0, max: 20, help: 'Total pregnancies (0 if male or never pregnant)' },
-        { key: 'family_history', label: 'Family History of Diabetes', type: 'select', options: ['No family history', 'Grandparents/Aunts/Uncles', 'Parents/Siblings'], help: 'Any blood relatives with diabetes?' }
+        { key: 'glucose', label: 'Glucose (mg/dL)', type: 'number', min: 0, max: 300, help: 'Your glucose level from blood test (mg/dL)' },
+        { key: 'bloodPressure', label: 'Diastolic Blood Pressure (mm Hg)', type: 'number', min: 40, max: 150, help: 'Your diastolic blood pressure (bottom number)' },
+        { key: 'skinThickness', label: 'Skin Thickness (mm)', type: 'number', min: 0, max: 100, help: 'Triceps skin fold thickness' },
+        { key: 'insulin', label: 'Insulin (mu U/ml)', type: 'number', min: 0, max: 900, help: '2-Hour serum insulin' },
+        { key: 'bmi', label: 'Body Mass Index (BMI)', type: 'number', min: 10, max: 60, help: 'Calculate: weight(kg) ÷ height(m)²' },
+        { key: 'diabetesPedigreeFunction', label: 'Diabetes Pedigree Function', type: 'number', min: 0, max: 2, help: 'A function indicating diabetes likelihood based on family history' },
+        { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' }
       ]
     },
     hypertension: {
       name: 'High Blood Pressure Risk',
       fields: [
-        { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
-        { key: 'sex', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
-        { key: 'trestbps', label: 'Blood Pressure (Top Number)', type: 'number', min: 80, max: 200, help: 'Your systolic blood pressure reading' },
-        { key: 'chol', label: 'Cholesterol Level', type: 'number', min: 100, max: 600, help: 'Total cholesterol from blood test (mg/dl)' },
-        { key: 'family_history', label: 'Family History of High BP', type: 'select', options: ['No family history', 'Some relatives', 'Close relatives'], help: 'Any family members with high blood pressure?' },
-        { key: 'salt_intake', label: 'How much salt do you eat?', type: 'select', options: ['Low salt diet', 'Normal amount', 'High salt diet'], help: 'Your typical salt consumption' }
+        { key: 'Age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
+        { key: 'Gender', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
+        { key: 'Systolic_BP', label: 'Systolic Blood Pressure (mm Hg)', type: 'number', min: 80, max: 250, help: 'Your systolic blood pressure (top number)' },
+        { key: 'Diastolic_BP', label: 'Diastolic Blood Pressure (mm Hg)', type: 'number', min: 40, max: 150, help: 'Your diastolic blood pressure (bottom number)' },
+        { key: 'Heart_Rate', label: 'Heart Rate (bpm)', type: 'number', min: 40, max: 200, help: 'Your resting heart rate' },
+        { key: 'BMI', label: 'Body Mass Index (BMI)', type: 'number', min: 10, max: 60, help: 'Calculate: weight(kg) ÷ height(m)²' }
       ]
     },
     ckd: {
       name: 'Kidney Disease Risk',
       fields: [
         { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
-        { key: 'bp', label: 'Do you have high blood pressure?', type: 'select', options: ['Normal BP', 'Slightly high', 'High BP', 'Very high BP'], help: 'Your blood pressure status' },
-        { key: 'dm', label: 'Do you have diabetes?', type: 'select', options: ['No', 'Yes'], help: 'Have you been diagnosed with diabetes?' },
-        { key: 'appetite', label: 'How is your appetite?', type: 'select', options: ['Good appetite', 'Poor appetite'], help: 'Your eating appetite recently' },
-        { key: 'pe', label: 'Do you have swollen feet/ankles?', type: 'select', options: ['No swelling', 'Yes, swelling'], help: 'Swelling in feet or ankles' },
-        { key: 'ane', label: 'Do you feel weak/tired often?', type: 'select', options: ['No', 'Yes'], help: 'Unusual weakness or fatigue' }
+        { key: 'bp', label: 'Blood Pressure (mm Hg)', type: 'number', min: 60, max: 200, help: 'Your blood pressure (mm Hg)' },
+        { key: 'bgr', label: 'Random Blood Glucose (mg/dL)', type: 'number', min: 50, max: 400, help: 'Random blood glucose level' },
+        { key: 'bu', label: 'Blood Urea (mg/dL)', type: 'number', min: 5, max: 300, help: 'Blood urea level from lab tests' },
+        { key: 'sc', label: 'Serum Creatinine (mg/dL)', type: 'number', min: 0.1, max: 15, help: 'Serum creatinine level', step: 0.1 },
+        { key: 'hemo', label: 'Hemoglobin (g/dL)', type: 'number', min: 5, max: 20, help: 'Hemoglobin level from lab tests', step: 0.1 },
+        { key: 'htn', label: 'Hypertension', type: 'select', options: ['No', 'Yes'], help: 'Have you been diagnosed with hypertension?' }
       ]
     },
     asthma: {
       name: 'Asthma Risk',
       fields: [
-        { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
-        { key: 'sex', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
-        { key: 'smoking', label: 'Do you smoke?', type: 'select', options: ['Never smoked', 'Used to smoke', 'Currently smoke'], help: 'Your smoking history' },
-        { key: 'allergies', label: 'Do you have allergies?', type: 'select', options: ['No allergies', 'Mild allergies', 'Moderate allergies', 'Severe allergies'], help: 'Any known allergies (food, pollen, dust, etc.)' },
-        { key: 'wheezing', label: 'Do you wheeze?', type: 'select', options: ['Never', 'Sometimes', 'Often', 'Always'], help: 'Whistling sound when breathing' },
-        { key: 'coughing', label: 'Do you have persistent cough?', type: 'select', options: ['No cough', 'Mild cough', 'Moderate cough', 'Severe cough'], help: 'Ongoing cough, especially at night' },
-        { key: 'shortness_of_breath', label: 'Do you get short of breath?', type: 'select', options: ['Never', 'Rarely', 'Sometimes', 'Often'], help: 'Difficulty breathing during normal activities' }
+        { key: 'Age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
+        { key: 'Gender', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
+        { key: 'BMI', label: 'Body Mass Index (BMI)', type: 'number', min: 10, max: 60, help: 'Calculate: weight(kg) ÷ height(m)²' },
+        { key: 'Smoking', label: 'Do you smoke?', type: 'select', options: ['Never smoked', 'Used to smoke', 'Light smoker', 'Heavy smoker'], help: 'Your smoking history' },
+        { key: 'Wheezing', label: 'Do you wheeze?', type: 'select', options: ['Never', 'Sometimes', 'Often', 'Always'], help: 'Whistling sound when breathing' },
+        { key: 'ShortnessOfBreath', label: 'Do you get short of breath?', type: 'select', options: ['Never', 'Sometimes', 'Often', 'Always'], help: 'Difficulty breathing during normal activities' },
+        { key: 'Coughing', label: 'Do you have persistent cough?', type: 'select', options: ['No cough', 'Mild cough', 'Moderate cough', 'Severe cough'], help: 'Ongoing cough, especially at night' },
+        { key: 'ExerciseInduced', label: 'Exercise-induced symptoms?', type: 'select', options: ['No', 'Yes'], help: 'Symptoms triggered by exercise' }
       ]
     },
     arthritis: {
       name: 'Arthritis Risk',
       fields: [
-        { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
-        { key: 'sex', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
-        { key: 'joint_pain', label: 'Do you have joint pain?', type: 'select', options: ['No pain', 'Mild pain', 'Moderate pain', 'Severe pain'], help: 'Pain in joints like knees, hands, hips' },
-        { key: 'morning_stiffness', label: 'Morning joint stiffness?', type: 'select', options: ['No stiffness', 'Less than 30 minutes', '30 minutes to 1 hour', 'More than 1 hour'], help: 'How long do joints feel stiff in the morning?' },
-        { key: 'family_history', label: 'Family history of arthritis?', type: 'select', options: ['No family history', 'Some relatives', 'Parents or siblings'], help: 'Any family members with arthritis?' },
-        { key: 'physical_activity', label: 'How active are you?', type: 'select', options: ['Not active', 'Lightly active', 'Moderately active', 'Very active'], help: 'Your typical physical activity level' }
+        { key: 'Age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
+        { key: 'Gender', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
+        { key: 'Pain_Level', label: 'Joint Pain Level', type: 'select', options: ['No pain', 'Mild pain', 'Moderate pain', 'Severe pain'], help: 'Pain in joints like knees, hands, hips' },
+        { key: 'Joint_Mobility', label: 'Joint Mobility (0-10)', type: 'number', min: 0, max: 10, step: 1, help: 'How easily your joints move (higher is better)' },
+        { key: 'Stiffness', label: 'Morning joint stiffness', type: 'select', options: ['No', 'Mild', 'Moderate', 'Severe'], help: 'Stiffness experienced in the morning' },
+        { key: 'Swelling', label: 'Joint Swelling', type: 'select', options: ['No', 'Mild', 'Moderate', 'Severe'], help: 'Swelling in your joints' }
       ]
     },
     copd: {
       name: 'COPD Risk',
       fields: [
-        { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
-        { key: 'sex', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
-        { key: 'smoking_status', label: 'Do you smoke?', type: 'select', options: ['Never smoked', 'Used to smoke', 'Light smoker', 'Heavy smoker'], help: 'Your smoking history' },
-        { key: 'chronic_cough', label: 'Do you have a persistent cough?', type: 'select', options: ['No cough', 'Sometimes', 'Daily cough', 'Constant cough'], help: 'Ongoing cough that produces mucus' },
-        { key: 'shortness_of_breath', label: 'Do you get short of breath?', type: 'select', options: ['Never', 'With heavy activity', 'With light activity', 'At rest'], help: 'Difficulty breathing during activities' },
-        { key: 'occupational_exposure', label: 'Work exposure to dust/chemicals?', type: 'select', options: ['No exposure', 'Some exposure', 'High exposure'], help: 'Workplace exposure to dust, fumes, or chemicals' }
+        { key: 'Age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
+        { key: 'Gender', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
+        { key: 'Smoking_History', label: 'Smoking History', type: 'select', options: ['Never smoked', 'Used to smoke', 'Light smoker', 'Heavy smoker'], help: 'Your smoking history' },
+        { key: 'Oxygen_Level', label: 'Oxygen Level (%)', type: 'number', min: 50, max: 100, step: 1, help: 'Your blood oxygen saturation (SpO2)' },
+        { key: 'Oxygen_Low', label: 'Is Oxygen Level Low?', type: 'select', options: ['No', 'Yes'], help: 'Low oxygen level (e.g., SpO2 < 92%)' },
+        { key: 'Cough', label: 'Cough frequency', type: 'select', options: ['Never', 'Sometimes', 'Often', 'Always'], help: 'Frequency of coughing' },
+        { key: 'Shortness_of_Breath', label: 'Shortness of Breath', type: 'select', options: ['Never', 'Sometimes', 'Often', 'Always'], help: 'Difficulty breathing during activities' },
+        { key: 'Fatigue', label: 'Fatigue', type: 'select', options: ['No fatigue', 'Sometimes tired', 'Often tired', 'Always tired'], help: 'Tiredness or weakness' },
+        { key: 'Cough_SOB', label: 'Cough with Shortness of Breath', type: 'select', options: ['No', 'Yes'], help: 'Cough and SOB occurring together' },
+        { key: 'Cough_Fatigue', label: 'Cough with Fatigue', type: 'select', options: ['No', 'Yes'], help: 'Cough and fatigue occurring together' }
       ]
     },
     liver: {
       name: 'Liver Disease Risk',
       fields: [
-        { key: 'age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
-        { key: 'sex', label: 'Gender', type: 'select', options: ['Male', 'Female'], help: 'Select your gender' },
-        { key: 'alcohol_consumption', label: 'Do you drink alcohol?', type: 'select', options: ['Never', 'Occasionally', 'Regularly', 'Heavily'], help: 'Your alcohol consumption habits' },
-        { key: 'fatigue', label: 'Do you feel tired often?', type: 'select', options: ['No fatigue', 'Sometimes tired', 'Often tired', 'Always tired'], help: 'Unusual tiredness or weakness' },
-        { key: 'jaundice', label: 'Yellow skin or eyes?', type: 'select', options: ['No', 'Slightly yellow', 'Noticeably yellow'], help: 'Yellowing of skin or whites of eyes' },
-        { key: 'abdominal_pain', label: 'Stomach/belly pain?', type: 'select', options: ['No pain', 'Mild pain', 'Moderate pain', 'Severe pain'], help: 'Pain in upper right belly area' }
+        { key: 'Age', label: 'Your Age', type: 'number', min: 1, max: 120, help: 'Enter your current age' },
+        { key: 'BMI', label: 'Body Mass Index (BMI)', type: 'number', min: 10, max: 60, help: 'Calculate: weight(kg) ÷ height(m)²' },
+        { key: 'ALT', label: 'ALT (U/L)', type: 'number', min: 0, max: 500, help: 'Alanine transaminase level' },
+        { key: 'AST', label: 'AST (U/L)', type: 'number', min: 0, max: 500, help: 'Aspartate transaminase level' },
+        { key: 'Bilirubin', label: 'Bilirubin (mg/dL)', type: 'number', min: 0, max: 20, help: 'Bilirubin level' },
+        { key: 'Fatigue', label: 'Fatigue', type: 'select', options: ['No fatigue', 'Sometimes tired', 'Often tired', 'Always tired'], help: 'Unusual tiredness or weakness' },
+        { key: 'Jaundice', label: 'Jaundice', type: 'select', options: ['No', 'Slightly yellow', 'Noticeably yellow'], help: 'Yellowing of skin or eyes' },
+        { key: 'Nausea', label: 'Nausea', type: 'select', options: ['No', 'Mild', 'Moderate', 'Severe'], help: 'Nausea severity' },
+        { key: 'Abdominal_Pain', label: 'Abdominal Pain', type: 'select', options: ['No pain', 'Mild pain', 'Moderate pain', 'Severe pain'], help: 'Pain in upper right belly area' }
       ]
     }
   };
@@ -173,7 +190,7 @@ function MLPredictionForm({ onPredictionResult }: MLPredictionFormProps) {
                     required
                   >
                     <option value="">Select {field.label}</option>
-                    {field.options?.map((option) => (
+                    {field.options?.map((option: string) => (
                       <option key={option} value={option}>{option}</option>
                     ))}
                   </select>
