@@ -13,7 +13,7 @@ interface MLPredictionResponse {
 }
 
 class MLService {
-  private baseUrl = 'http://localhost:8000';
+  private baseUrl = (import.meta.env.VITE_ML_API_URL?.trim() || 'http://localhost:8000');
   // Add cached table existence checks to avoid repeated 404/PGRST205
   private tableExistenceCache: Record<string, { exists: boolean; timestamp: number }> = {};
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
