@@ -11,6 +11,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.ensemble import RandomForestRegressor
 import pandas as pd
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import LabelEncoder
+from xgboost import XGBClassifier
+from collections import Counter
 
 app = FastAPI(title="Chronic Disease ML API", version="1.0.0")
 
@@ -148,8 +152,13 @@ class HealthPredictionResponse(BaseModel):
     adherence_rate: float
 
 # Enhance artifact loader with diagnostic logs
+ARTIFACT_CACHE: Dict[str, Dict[str, Any]] = {}
 def load_model_artifacts(model_type: str):
     """Load all model artifacts for a given model type"""
+    # Serve from cache if available
+    cached = ARTIFACT_CACHE.get(model_type)
+    if cached:
+        return cached
     config = MODEL_CONFIGS.get(model_type)
     if not config:
         return None
@@ -193,8 +202,23 @@ def load_model_artifacts(model_type: str):
             print(f"[{model_type}] Cat imputer path: {cat_imputer_path} exists={cat_imputer_path.exists()}")
             if cat_imputer_path.exists():
                 artifacts["cat_imputer"] = joblib.load(cat_imputer_path)
-        
-        return artifacts if "model" in artifacts else None
+
+        # If artifacts are missing, attempt fallback training (heart only)
+        if "model" not in artifacts and model_type == "heart":
+            print("[heart] Pretrained artifacts missing. Starting fallback training from CSV...")
+            fallback = train_heart_model_fallback(base_path)
+            if fallback:
+                ARTIFACT_CACHE[model_type] = fallback
+                return fallback
+            else:
+                print("[heart] Fallback training could not run (CSV missing or error).")
+                return None
+
+        # Cache and return loaded artifacts
+        if "model" in artifacts:
+            ARTIFACT_CACHE[model_type] = artifacts
+            return artifacts
+        return None
     
     except Exception as e:
         print(f"Error loading {model_type} artifacts: {e}")
@@ -268,17 +292,51 @@ def make_prediction(model_type: str, features: Dict[str, Any]):
             # Heart disease specific processing - handle encoders properly
             df = pd.DataFrame([encoded_features])
             
-            # Impute
+            # Helper: coerce values to match encoder classes
+            def _coerce_for_encoder(col_name: str, encoder, series: pd.Series) -> pd.Series:
+                classes = list(getattr(encoder, "classes_", []))
+                if not classes:
+                    return series
+                # Numeric classes 0/1
+                if all(isinstance(c, (int, np.integer)) for c in classes):
+                    def _map_val(v):
+                        if isinstance(v, str):
+                            lv = v.strip().lower()
+                            if lv in ["male", "m", "yes", "true", "1"]:
+                                return 1
+                            if lv in ["female", "f", "no", "false", "0"]:
+                                return 0
+                            # try int cast
+                            try:
+                                return int(v)
+                            except Exception:
+                                return v
+                        if isinstance(v, bool):
+                            return 1 if v else 0
+                        return v
+                    return series.apply(_map_val)
+                # String classes like 'Male'/'Female' or 'True'/'False'
+                if all(isinstance(c, str) for c in classes):
+                    def _map_val(v):
+                        if isinstance(v, bool):
+                            return "True" if v else "False"
+                        if isinstance(v, (int, np.integer)):
+                            return classes[1] if int(v) == 1 else classes[0]
+                        return v
+                    return series.apply(_map_val)
+                return series
+            
+            # Impute and encode
             if "encoders" in artifacts and "categorical_cols" in config:
                 for col in config["categorical_cols"]:
                     if col in df.columns:
                         try:
-                            df[col] = artifacts["encoders"][col].transform(df[col])
+                            coerced = _coerce_for_encoder(col, artifacts["encoders"][col], df[col])
+                            df[col] = artifacts["encoders"][col].transform(coerced)
                         except ValueError as e:
                             if "previously unseen labels" in str(e):
-                                # Handle unseen labels by using the most frequent class
                                 print(f"Warning: Unseen label in {col}, using fallback value")
-                                df[col] = 0  # Use 0 as fallback
+                                df[col] = 0
                             else:
                                 raise e
             
@@ -441,3 +499,74 @@ async def get_models_status():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+def train_heart_model_fallback(base_path: Path):
+    """Train heart model from CSV when pretrained artifacts are unavailable.
+    Returns artifacts dict compatible with load_model_artifacts output or None on failure.
+    """
+    try:
+        data_path = base_path / "heart.csv"
+        print(f"[heart] Fallback training from CSV: {data_path} exists={data_path.exists()}")
+        if not data_path.exists():
+            print("[heart] heart.csv not found; cannot fallback-train.")
+            return None
+
+        df = pd.read_csv(data_path)
+        features = MODEL_CONFIGS["heart"]["features"]
+        target_col = df.columns[-1]
+        X = df[features].copy()
+        y = df[target_col].copy()
+        # Convert target to binary
+        y = y.apply(lambda x: 1 if x > 0 else 0)
+
+        categorical_cols = MODEL_CONFIGS["heart"]["categorical_cols"]
+        numerical_cols = [col for col in features if col not in categorical_cols]
+
+        # Impute
+        num_imputer = SimpleImputer(strategy="median")
+        X[numerical_cols] = num_imputer.fit_transform(X[numerical_cols])
+        cat_imputer = SimpleImputer(strategy="most_frequent")
+        X[categorical_cols] = cat_imputer.fit_transform(X[categorical_cols])
+
+        # Encode categorical
+        label_encoders = {}
+        for col in categorical_cols:
+            le = LabelEncoder()
+            X[col] = le.fit_transform(X[col])
+            label_encoders[col] = le
+
+        # Scale
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X[features])
+
+        # Class imbalance handling
+        counter = Counter(y)
+        pos = counter.get(1, 0)
+        neg = counter.get(0, 0)
+        scale_pos_weight = (neg / pos) if pos > 0 else 1.0
+
+        # Train model
+        model = XGBClassifier(
+            n_estimators=200,
+            max_depth=4,
+            learning_rate=0.1,
+            use_label_encoder=False,
+            eval_metric="logloss",
+            random_state=42,
+            scale_pos_weight=scale_pos_weight,
+        )
+        model.fit(X_scaled, y)
+
+        print("✅ [heart] Fallback model trained and in-memory artifacts created")
+        artifacts = {
+            "model": model,
+            "scaler": scaler,
+            "encoders": label_encoders,
+            "num_imputer": num_imputer,
+            "cat_imputer": cat_imputer,
+        }
+        return artifacts
+    except Exception as e:
+        print(f"[heart] Fallback training failed: {e}")
+        return None
